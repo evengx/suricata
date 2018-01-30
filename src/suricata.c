@@ -1983,6 +1983,25 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
             suri->sig_file = optarg;
             suri->sig_file_exclusive = TRUE;
             break;
+        case 'w'
+#ifdef WINDIVERT
+            if (suri->run_mode == RUNMODE_UNKNOWN) {
+                suri->run_mode = RUNMODE_WINDIVERT;
+                if (WindivertRegisterFilter(optarg) == -1) {
+                    return TM_ECODE_FAILED;
+                }
+            } else if (suri->run_mode == RUNMODE_WINDIVERT) {
+                if (WinDivertRegisterFilter(optarg) == -1) {
+                    return TM_ECODE_FAILED;
+                }
+            } else {
+                SCLogError(SC_ERR_MULTIPLE_RUN_MODE, "more than one run mode "
+                                                     "has been specified");
+                PrintUsage(argv[0]);
+                return TM_ECODE_FAILED;
+            }
+#endif /* WINDIVERT */
+        break;
         case 'u':
 #ifdef UNITTESTS
             if (suri->run_mode == RUNMODE_UNKNOWN) {
