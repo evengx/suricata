@@ -2000,6 +2000,9 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                 PrintUsage(argv[0]);
                 return TM_ECODE_FAILED;
             }
+#else
+            SCLogError(SC_ERR_WINDIVERT_NOSUPPORT,"WinDivert not enabled. Make sure to pass --enable-windivert to configure when building.");
+            return TM_ECODE_FAILED;            
 #endif /* WINDIVERT */
         break;
         case 'u':

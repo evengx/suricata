@@ -463,6 +463,9 @@ typedef struct Packet_
         PfringPacketVars pfring_v;
 #endif
 #endif
+#ifdef WINDIVERT
+        WinDivertPacketVars windivert_v;
+#endif /* WINDIVERT */
 
         /** libpcap vars: shared by Pcap Live mode and Pcap File mode */
         PcapPacketVars pcap_v;
