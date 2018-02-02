@@ -20,9 +20,9 @@
  *
  * \author Jacob Masen-Smith <jacob@evengx.com>
  *
- * WinDivert emulation of netfilter_queue functionality to hook into Suricata's IPS mode.
- * Supported solely on Windows.
- * 
+ * WinDivert emulation of netfilter_queue functionality to hook into Suricata's
+ * IPS mode. Supported solely on Windows.
+ *
  */
 
 #include "suricata-common.h"
@@ -71,8 +71,8 @@ TmEcode NoWinDivertSupportExit(ThreadVars *tv, const void *initdata, void **data
 {
     SCLogError(
         SC_ERR_WINDIVERT_NOSUPPORT,
-        "Error creating thread %s: you do not have support for WinDivert enabled; please recompile "
-        "with --enable-windivert",
+        "Error creating thread %s: you do not have support for WinDivert "
+        "enabled; please recompile with --enable-windivert",
         tv->name);
         exit(EXIT_FAILURE);
 }
@@ -96,6 +96,8 @@ TmEcode VerdictWinDivertThreadDeinit(ThreadVars *, void *);
 TmEcode DecodeWinDivert(ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
 TmEcode DecodeWinDivertThreadInit(ThreadVars *, const void *, void **);
 TmEcode DecodeWinDivertThreadDeinit(ThreadVars *, void *);
+
+static bool WinDivertRecvPkt(WinDivertThreadVars *, WinDivertFilterVars *);
 
 void TmModuleReceiveWinDivertRegister(void)
 {
@@ -141,18 +143,16 @@ TmEcode ReceiveWinDivertLoop(ThreadVars *tv, void *context, void *slot)
     SCEnter();
 
     WinDivertThreadVars *wd_tv = (WinDivertThreadVars *)context;
-    WinDivertFilterVars *wd_qv = (WinDivertQueueVars *)WinDivertGetQueue(wd_tv->filter_index);
+    WinDivertFilterVars *wd_fv = (WinDivertQueueVars *)WinDivertGetFilter(wd_tv->filter_index);
 
     while(true) {
         if (suricata_ctl_flags & SURICATA_STOP) {
             SCReturnInt(TM_ECODE_OK);
         }
-        
-        /* make sure we have at least one packet in the packet pool, to prevent
-         * us from alloc'ing packets at line rate */
-        PacketPoolWait();
 
-        WinDivertRecv(); /* \todo - correct args or separate into sub-function */
+        if (unlikely(!WinDivertRecvPkt(wd_tv, wd_fv))) {
+            SCReturnInt(TM_ECODE_FAILED);
+        }
 
         StatsSyncCountersIfSignalled(tv);
     }
@@ -176,5 +176,52 @@ TmEcode VerdictWinDivertThreadDeinit(ThreadVars *, void *);
 TmEcode DecodeWinDivert(ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
 TmEcode DecodeWinDivertThreadInit(ThreadVars *, const void *, void **);
 TmEcode DecodeWinDivertThreadDeinit(ThreadVars *, void *);
+
+static TmEcode WinDivertRecvPkt(WinDivertThreadVars *wd_tv, WinDivertFilterVars *wd_fv)
+{
+    SCEnter();
+
+    /* make sure we have at least one packet in the packet pool, to prevent us
+     * from alloc'ing packets at line rate
+     */
+    PacketPoolWait();
+
+    /* obtain a packet buffer */
+    Packet *p = PacketGetFromQueueOrAlloc();
+    if (unlikely(p == NULL)) {
+        SCLogDebug("PacketGetFromQueueOrAlloc() - failed to obtain Packet buffer");
+        SCReturnInt(TM_ECODE_FAILED);
+    }
+    PKT_SET_SRC(p, PKT_SRC_WIRE);
+
+    /* WinDivert needs to be fed a buffer, so we must make one available. It is
+     * highly likely we'll encounter segmentation offload so we'll just give our
+     * pool packets external buffers.
+     */ 
+    PacketCallocExtPkt(p, MAX_PAYLOAD_SIZE);
+
+    bool success = WinDivertRecv(
+        wd_fv->filter_handle,
+        p->ext_pkt,
+        MAX_PAYLOAD_SIZE,
+        p->windivert_v.addr,
+        p->pkt_len);
+    if (!success) {
+        SCReturnInt(TM_ECODE_FAILED);
+    }
+
+    p->windivert_v.filter_handle = wd_fv->filter_handle;
+
+    /* Do the packet processing by calling TmThreadsSlotProcessPkt, this will,
+     * depending on the running mode, pass the packet to the treatment functions
+     * or push it to a packet pool. So processing time can vary.
+     */
+    if (TmThreadsSlotProcessPkt(wd_tv->tv, /* \todo what var? */, p) != TM_ECODE_OK) {
+        TmqhOutputPacketpool(ptv->tv, p);
+        SCReturnInt(TM_ECODE_FAILED);
+    }
+
+    SCReturnInt(TM_ECODE_OK);
+}
 
 #endif /* WINDIVERT */
