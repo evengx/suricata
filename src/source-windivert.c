@@ -46,36 +46,24 @@ TmECode NoWinDivertSupportExit(ThreadVars *, const void *, void **);
 
 void TmModuleReceiveWinDivertRegister(void)
 {
+    memset(&tmm_modules[TMM_RECEIVEWINDIVERT], 0, sizeof(TmModule));
     tmm_modules[TMM_RECEIVEWINDIVERT].name = "ReceiveWinDivert";
     tmm_modules[TMM_RECEIVEWINDIVERT].ThreadInit = NoWinDivertSupportExit;
-    tmm_modules[TMM_RECEIVEWINDIVERT].Func = NULL;
-    tmm_modules[TMM_RECEIVEWINDIVERT].ThreadExitPrintStats = NULL;
-    tmm_modules[TMM_RECEIVEWINDIVERT].ThreadDeinit = NULL;
-    tmm_modules[TMM_RECEIVEWINDIVERT].RegisterTests = NULL;
-    tmm_modules[TMM_RECEIVEWINDIVERT].cap_flags = SC_CAP_NET_ADMIN;
     tmm_modules[TMM_RECEIVEWINDIVERT].flags = TM_FLAG_RECEIVE_TM;
 }
 
 void TmModuleVerdictWinDivertRegister(void)
 {
+    memset(&tmm_modules[TMM_VERDICTWINDIVERT], 0, sizeof(TmModule));
     tmm_modules[TMM_VERDICTWINDIVERT].name = "VerdictWinDivert";
     tmm_modules[TMM_VERDICTWINDIVERT].ThreadInit = NoWinDivertSupportExit;
-    tmm_modules[TMM_VERDICTWINDIVERT].Func = NULL;
-    tmm_modules[TMM_VERDICTWINDIVERT].ThreadExitPrintStats = NULL;
-    tmm_modules[TMM_VERDICTWINDIVERT].ThreadDeinit = NULL;
-    tmm_modules[TMM_VERDICTWINDIVERT].RegisterTests = NULL;
-    tmm_modules[TMM_VERDICTWINDIVERT].cap_flags = SC_CAP_NET_ADMIN;
 }
 
 void TmModuleDecodeWinDivertRegister(void)
 {
+    memset(&tmm_modules[TMM_DECODEWINDIVERT], 0, sizeof(TmModule));
     tmm_modules[TMM_DECODEWINDIVERT].name = "DecodeWinDivert";
     tmm_modules[TMM_DECODEWINDIVERT].ThreadInit = NoWinDivertSupportExit;
-    tmm_modules[TMM_DECODEWINDIVERT].Func = NULL;
-    tmm_modules[TMM_DECODEWINDIVERT].ThreadExitPrintStats = NULL;
-    tmm_modules[TMM_DECODEWINDIVERT].ThreadDeinit = NULL;
-    tmm_modules[TMM_DECODEWINDIVERT].RegisterTests = NULL;
-    tmm_modules[TMM_DECODEWINDIVERT].cap_flags = 0;
     tmm_modules[TMM_DECODEWINDIVERT].flags = TM_FLAG_DECODE_TM;
 }
 
@@ -88,5 +76,105 @@ TmEcode NoWinDivertSupportExit(ThreadVars *tv, const void *initdata, void **data
         tv->name);
         exit(EXIT_FAILURE);
 }
-#else
+
+#else /* implied we do have WinDivert support */
+
+typedef struct WinDivertThreadVars_ {
+    uint16_t filter_index;
+} WinDivertThreadVars;
+
+/* forward declarations of internal functions */
+TmEcode ReceiveWinDivertLoop(ThreadVars *, void *, void *);
+TmEcode ReceiveWinDivertThreadInit(ThreadVars *, const void *, void **);
+TmECode ReceiveWinDivertThreadDeinit(ThreadVars *, void *);
+void ReceiveWinDivertThreadExitStats(ThreadVars *, void *);
+
+TmEcode VerdictWinDivert(ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
+TmEcode VerdictWinDivertThreadInit(ThreadVars *, const void *, void **);
+TmEcode VerdictWinDivertThreadDeinit(ThreadVars *, void *);
+
+TmEcode DecodeWinDivert(ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
+TmEcode DecodeWinDivertThreadInit(ThreadVars *, const void *, void **);
+TmEcode DecodeWinDivertThreadDeinit(ThreadVars *, void *);
+
+void TmModuleReceiveWinDivertRegister(void)
+{
+    TmModule *tm_ptr = &tmm_modules[TMM_RECEIVEWINDIVERT];
+    memset(tm_ptr, 0, sizeof(TmModule));
+    
+    tm_ptr->name = "ReceiveWinDivert";
+    tm_ptr->ThreadInit = ReceiveWinDivertThreadInit;
+    tm_ptr->PktAcqLoop = ReceiveWinDivertLoop;
+    tm_ptr->ThreadExitPrintStats = ReceiveWinDivertThreadExitStats;
+    tm_ptr->ThreadDeinit = ReceiveWinDivertThreadDeinit;
+    tm_ptr->flags = TM_FLAG_RECEIVE_TM;
+}
+
+void TmModuleVerdictWinDivertRegister(void)
+{
+    TmModule *tm_ptr = &tmm_modules[TMM_VERDICTWINDIVERT];
+    memset(tm_ptr, 0, sizeof(TmModule));
+    
+    tm_ptr->name = "VerdictWinDivert";
+    tm_ptr->ThreadInit = VerdictWinDivertThreadInit;
+    tm_ptr->Func = VerdictWinDivert;
+    tm_ptr->ThreadDeinit = VerdictWinDivertThreadDeinit;
+}
+
+void TmModuleDecodeWinDivertRegister(void)
+{
+    TmModule *tm_ptr = &tmm_modules[TMM_DECODEWINDIVERT];
+    memset(tm_ptr, 0, sizeof(TmModule));
+    
+    tm_ptr->name = "DecodeWinDivert";
+    tm_ptr->ThreadInit = DecodeWinDivertThreadInit;
+    tm_ptr->Func = DecodeWinDivert;
+    tm_ptr->ThreadDeinit = DecodeWinDivertThreadDeinit;
+    tm_ptr->flags = TM_FLAG_DECODE_TM;
+}
+
+/**
+ * \brief Main WinDivert packet receive pump
+ */
+TmEcode ReceiveWinDivertLoop(ThreadVars *tv, void *context, void *slot)
+{
+    SCEnter();
+
+    WinDivertThreadVars *wd_tv = (WinDivertThreadVars *)context;
+    WinDivertFilterVars *wd_qv = (WinDivertQueueVars *)WinDivertGetQueue(wd_tv->filter_index);
+
+    while(true) {
+        if (suricata_ctl_flags & SURICATA_STOP) {
+            SCReturnInt(TM_ECODE_OK);
+        }
+        
+        /* make sure we have at least one packet in the packet pool, to prevent
+         * us from alloc'ing packets at line rate */
+        PacketPoolWait();
+
+        WinDivertRecv(); /* \todo - correct args or separate into sub-function */
+
+        StatsSyncCountersIfSignalled(tv);
+    }
+
+    SCReturnInt(TM_ECODE_OK);
+}
+
+TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *context, void **)
+{
+    WinDivertThreadVars *wd_thread_vars = (WinDivertThreadVars *)context;
+    WinDivertFilterVars *wd_filter_vars = WinDivertGetFilter()
+}
+
+TmECode ReceiveWinDivertThreadDeinit(ThreadVars *, void *);
+void ReceiveWinDivertThreadExitStats(ThreadVars *, void *);
+
+TmEcode VerdictWinDivert(ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
+TmEcode VerdictWinDivertThreadInit(ThreadVars *, const void *, void **);
+TmEcode VerdictWinDivertThreadDeinit(ThreadVars *, void *);
+
+TmEcode DecodeWinDivert(ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
+TmEcode DecodeWinDivertThreadInit(ThreadVars *, const void *, void **);
+TmEcode DecodeWinDivertThreadDeinit(ThreadVars *, void *);
+
 #endif /* WINDIVERT */

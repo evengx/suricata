@@ -31,7 +31,7 @@
 typedef void *WinDivertHandle;
 
 typedef struct WinDivertFilterVars_ {
-    WinDivertHandle h;
+    WinDivertHandle filter_handle;
 
     /* counters */
     uint32_t pkts;
@@ -42,6 +42,10 @@ typedef struct WinDivertFilterVars_ {
     uint32_t replaced;
     
 } WinDivertFilterVars;
+
+typedef struct WinDivertPacketVars_ {
+    WinDivertHandle filter_handle;
+} WinDivertPacketVars;
 
 int WinDivertRegisterFilter(char *filter);
 void *WinDivertGetFilter(int number);
