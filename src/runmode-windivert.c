@@ -53,12 +53,6 @@ void RunModeIpsWinDivertRegister(void)
         "autofp",
         "Multi-threaded WinDivert IPS mode load-balanced by flow",
         RunModeIpsWinDivertAutoFp);
-
-    RunModeRegisterNewRunMode(
-        RUNMODE_WINDIVERT,
-        "workers",
-        "Multi-filter WinDivert IPS mode with one thread per filter",
-        RunModeIpsWinDivertWorker);
 }
 
 int RunModeIpsWinDivertAutoFp(void)
@@ -79,24 +73,4 @@ int RunModeIpsWinDivertAutoFp(void)
         "DecodeWinDivert");
 #endif /* WINDIVERT */
     return ret;
-}
-
-int RunModeIpsWinDivertWorker(void)
-{
-    SCEnter();
-    int ret = 0;
-#ifdef WINDIVERT
-
-    RunModeInitialize();
-
-    TimeModeSetLive();
-
-    LiveDeviceHasNoStats(); // TODO: this is copied from runmode-nfq.c, is this necessary?
-
-    ret = RunModeSetIPSWorker(
-        WinDivertGetThread,
-        "ReceiveWinDivert",
-        "VerdictWinDivert",
-        "DecodeWinDivert");
-#endif /* WINDIVERT */
 }

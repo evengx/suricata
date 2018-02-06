@@ -26,7 +26,6 @@
 #define __RUNMODE_WINDIVERT_H__
 
 int RunModeIpsWinDivertAutoFp(void);
-int RunModeIpsWinDivertWorker(void);
 void RunModeIpsWinDivertRegister(void);
 const char *RunModeIpsWinDivertGetDefaultMode(void);
 
