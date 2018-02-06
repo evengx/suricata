@@ -75,13 +75,9 @@ TmEcode NoWinDivertSupportExit(ThreadVars *tv, const void *initdata, void **data
         "enabled; please recompile with --enable-windivert",
         tv->name);
         exit(EXIT_FAILURE);
-}
+}*
 
 #else /* implied we do have WinDivert support */
-
-typedef struct WinDivertThreadVars_ {
-    uint16_t filter_index;
-} WinDivertThreadVars;
 
 /* forward declarations of internal functions */
 TmEcode ReceiveWinDivertLoop(ThreadVars *, void *, void *);
@@ -97,7 +93,7 @@ TmEcode DecodeWinDivert(ThreadVars *, Packet *, void *, PacketQueue *, PacketQue
 TmEcode DecodeWinDivertThreadInit(ThreadVars *, const void *, void **);
 TmEcode DecodeWinDivertThreadDeinit(ThreadVars *, void *);
 
-static bool WinDivertRecvPkt(WinDivertThreadVars *, WinDivertFilterVars *);
+static bool WinDivertRecvPkt(WinDivertThreadVars *);
 
 void TmModuleReceiveWinDivertRegister(void)
 {
@@ -143,33 +139,116 @@ TmEcode ReceiveWinDivertLoop(ThreadVars *tv, void *context, void *slot)
     SCEnter();
 
     WinDivertThreadVars *wd_tv = (WinDivertThreadVars *)context;
-    WinDivertFilterVars *wd_fv = (WinDivertQueueVars *)WinDivertGetFilter(wd_tv->filter_index);
+    wd_tv->slot = ((TmSlot *)slot)->slot_next;
 
     while(true) {
         if (suricata_ctl_flags & SURICATA_STOP) {
             SCReturnInt(TM_ECODE_OK);
         }
 
-        if (unlikely(!WinDivertRecvPkt(wd_tv, wd_fv))) {
+        if (unlikely(WinDivertRecvPkt(wd_tv) != TM_ECODE_OK)) {
             SCReturnInt(TM_ECODE_FAILED);
         }
 
-        StatsSyncCountersIfSignalled(tv);
+        StatsSyncCountersIfSignalled(tv); 
     }
 
     SCReturnInt(TM_ECODE_OK);
 }
 
-TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *context, void **)
+/**
+ * \brief Init function for ReceiveWinDivert
+ * 
+ * ReceiveWinDivertThreadInit sets up receiving packets via WinDivert.
+ * 
+ * \param tv pointer to generic thread vars
+ * \param initdata pointer to the interface passed from the user
+ * \param context out-pointer to the WinDivert-specific thread vars
+ */
+TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *initdata, void **context)
 {
-    WinDivertThreadVars *wd_thread_vars = (WinDivertThreadVars *)context;
-    WinDivertFilterVars *wd_filter_vars = WinDivertGetFilter()
+    SCEnter();
+    
+    WinDivertFilterConfig *wd_filter_cfg = (WinDivertFilterConfig *)initdata;
+
+    if (wd_filter_cfg == NULL) {
+        SCLogError(SC_ERR_INVALID_ARGUMENT, "initdata == NULL");
+        SCReturnInt(TM_ECODE_FAILED);
+    }
+
+    WinDivertThreadVars *wd_thread_vars = SCMalloc(sizeof(WinDivertThreadVars));
+    if (unlikely(wd_thread_vars == NULL)) {
+        SCReturnInt(TM_ECODE_FAILED);
+    }
+    memset(wd_thread_vars, 0, sizeof(WinDivertThreadVars));
+    *context = wd_thread_vars;
+
+    wd_thread_vars->filter_handle = WinDivertOpen(
+        wd_filter_cfg->filter_string,
+        wd_filter_cfg->layer,
+        wd_filter_cfg->priority,
+        wd_filter_cfg->flags);
+
+    if (wd_thread_vars->filter_handle == INVALID_HANDLE_VALUE) {
+        SCLogError(GetLastError(), "WinDivertOpen failed")
+        SCReturnInt(TM_ECODE_FAILED);
+    }
+
+    SCReturnInt(TM_ECODE_OK);
 }
 
-TmECode ReceiveWinDivertThreadDeinit(ThreadVars *, void *);
-void ReceiveWinDivertThreadExitStats(ThreadVars *, void *);
+/**
+ * \brief Deinit function releases resources at exit.
+ * 
+ * \param tv pointer to generic thread vars
+ * \param context pointer to WinDivert-specific thread vars 
+ */
+TmECode ReceiveWinDivertThreadDeinit(ThreadVars *tv, void *context)
+{
+    WinDivertThreadVars *wd_tv = (WinDivertThreadVars *)context;
 
-TmEcode VerdictWinDivert(ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
+    if (!WinDivertClose(wd_tv->filter_handle)) {
+        SCLogError(GetLastError(), "WinDivertClose failed");
+        SCReturnInt(TM_ECODE_FAILED);
+    }
+    
+    SCReturnInt(TM_ECODE_OK);
+}
+
+/**
+ * \brief ExitStats prints stats to stdout at exit
+ * 
+ * \param tv pointer to generic thread vars
+ * \param context pointer to WinDivert-specific thread vars 
+ */
+void ReceiveWinDivertThreadExitStats(ThreadVars *tv, void *context)
+{
+    WinDivertThreadVars *wd_tv = (WinDivertThreadVars *)context;
+
+    SCLogInfo(
+        "(%s) Packets %" PRIu32 ", Bytes %" PRIu64 ", Errors %" PRIu32 "",
+        tv->name,
+        wd_tv->pkts,
+        wd_tv->bytes,
+        wd_tv->errs);
+    SCLogInfo(
+        "(%s) Verdict: Accepted %" PRIu32 ", Dropped %" PRIu32 ", Replaced %" PRIu32 "",
+        tv->name,
+        wd_tv->stats.counter_ips_accepted,
+        wd_tv->stats.counter_ips_dropped,
+        wd_tv->stats.counter_ips_replaced);
+}
+
+/**
+ * \brief WinDivert verdict module packet entry function
+ */
+TmEcode VerdictWinDivert(ThreadVars *tv, Packet *p, void *context, PacketQueue *pq, PacketQueue *postpq)
+{
+    WinDivertThreadVars *wd_tv = (WinDivertThreadVars *)context;
+
+    
+}
+
 TmEcode VerdictWinDivertThreadInit(ThreadVars *, const void *, void **);
 TmEcode VerdictWinDivertThreadDeinit(ThreadVars *, void *);
 
@@ -177,7 +256,7 @@ TmEcode DecodeWinDivert(ThreadVars *, Packet *, void *, PacketQueue *, PacketQue
 TmEcode DecodeWinDivertThreadInit(ThreadVars *, const void *, void **);
 TmEcode DecodeWinDivertThreadDeinit(ThreadVars *, void *);
 
-static TmEcode WinDivertRecvPkt(WinDivertThreadVars *wd_tv, WinDivertFilterVars *wd_fv)
+static TmEcode WinDivertRecvPkt(WinDivertThreadVars *wd_tv)
 {
     SCEnter();
 
@@ -201,23 +280,24 @@ static TmEcode WinDivertRecvPkt(WinDivertThreadVars *wd_tv, WinDivertFilterVars 
     PacketCallocExtPkt(p, MAX_PAYLOAD_SIZE);
 
     bool success = WinDivertRecv(
-        wd_fv->filter_handle,
+        wd_tv->filter_handle,
         p->ext_pkt,
         MAX_PAYLOAD_SIZE,
         p->windivert_v.addr,
         p->pkt_len);
     if (!success) {
+        SCLogError(GetLastError(), "WinDivertRecv failed")
         SCReturnInt(TM_ECODE_FAILED);
     }
 
-    p->windivert_v.filter_handle = wd_fv->filter_handle;
+    p->windivert_v.filter_handle = wd_tv->filter_handle;
 
     /* Do the packet processing by calling TmThreadsSlotProcessPkt, this will,
      * depending on the running mode, pass the packet to the treatment functions
      * or push it to a packet pool. So processing time can vary.
      */
-    if (TmThreadsSlotProcessPkt(wd_tv->tv, /* \todo what var? */, p) != TM_ECODE_OK) {
-        TmqhOutputPacketpool(ptv->tv, p);
+    if (TmThreadsSlotProcessPkt(wd_tv->tv, wd_tv->slot, p) != TM_ECODE_OK) {
+        TmqhOutputPacketpool(wd_tv->tv, p);
         SCReturnInt(TM_ECODE_FAILED);
     }
 

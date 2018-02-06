@@ -30,26 +30,39 @@
 
 typedef void *WinDivertHandle;
 
-typedef struct WinDivertFilterVars_ {
+/**
+ * \brief WinDivertFilterConfig is the initial configuration of the filter.
+ * 
+ * see https://reqrypt.org/windivert-doc.html#divert_open for more info
+ */
+typedef struct WinDivertFilterConfig_ {
+    /* see https://reqrypt.org/windivert-doc.html#filter_language */
+    const char *filter_string;
+    WINDIVERT_LAYER layer;
+    int16_t priority;
+    uint64_t flags;
+}
+
+typedef struct WinDivertThreadVars_ {
     WinDivertHandle filter_handle;
+
+    TmSlot *slot
 
     /* counters */
     uint32_t pkts;
     uint64_t bytes;
     uint32_t errs;
-    uint32_t accepted;
-    uint32_t dropped;
-    uint32_t replaced;
+
+    CaptureStats stats;
     
-} WinDivertFilterVars;
+} WinDivertThreadVars;
 
 typedef struct WinDivertPacketVars_ {
     WinDivertHandle filter_handle;
+    WINDIVERT_ADDRESS addr;
 } WinDivertPacketVars;
 
 int WinDivertRegisterFilter(char *filter);
-void *WinDivertGetFilter(int number);
-void *WinDivertGetThread(int number);
 
 #endif /* WINDIVERT */
 #endif /* __SOURCE_WINDIVERT_H__ */
