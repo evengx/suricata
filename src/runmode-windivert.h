@@ -19,7 +19,7 @@
  *  \file
  *
  *  \author Jacob Masen-Smith <jacob@evengx.com>
- * 
+ *
  */
 
 #ifndef __RUNMODE_WINDIVERT_H__

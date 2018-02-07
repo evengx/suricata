@@ -23,36 +23,32 @@
  * Handling of WinDivert runmodes.
  */
 
+#include "runmode-windivert.h"
+#include "conf.h"
+#include "output.h"
+#include "runmodes.h"
 #include "suricata-common.h"
 #include "tm-threads.h"
-#include "conf.h"
-#include "runmodes.h"
-#include "runmode-windivert.h"
-#include "output.h"
 
-#include "util-debug.h"
-#include "util-time.h"
-#include "util-cpu.h"
 #include "util-affinity.h"
-#include "util-runmodes.h"
+#include "util-cpu.h"
+#include "util-debug.h"
 #include "util-device.h"
+#include "util-runmodes.h"
+#include "util-time.h"
 
 static const char *default_mode;
 
-const char *RunModeIpsWinDivertGetDefaultMode(void)
-{
-    return default_mode;
-}
+const char *RunModeIpsWinDivertGetDefaultMode(void) { return default_mode; }
 
 void RunModeIpsWinDivertRegister(void)
 {
     default_mode = "autofp";
 
     RunModeRegisterNewRunMode(
-        RUNMODE_WINDIVERT,
-        "autofp",
-        "Multi-threaded WinDivert IPS mode load-balanced by flow",
-        RunModeIpsWinDivertAutoFp);
+            RUNMODE_WINDIVERT, "autofp",
+            "Multi-threaded WinDivert IPS mode load-balanced by flow",
+            RunModeIpsWinDivertAutoFp);
 }
 
 int RunModeIpsWinDivertAutoFp(void)
@@ -64,13 +60,11 @@ int RunModeIpsWinDivertAutoFp(void)
 
     TimeModeSetLive();
 
-    LiveDeviceHasNoStats(); // TODO: this is copied from runmode-nfq.c, is this necessary?
+    LiveDeviceHasNoStats(); // TODO: this is copied from runmode-nfq.c, is this
+                            // necessary?
 
-    ret = RunModeSetIPSAutoFp(
-        WinDivertGetThread,
-        "ReceiveWinDivert",
-        "VerdictWinDivert",
-        "DecodeWinDivert");
+    ret = RunModeSetIPSAutoFp(WinDivertGetThread, "ReceiveWinDivert",
+                              "VerdictWinDivert", "DecodeWinDivert");
 #endif /* WINDIVERT */
     return ret;
 }
