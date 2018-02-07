@@ -37,14 +37,16 @@ typedef void *WinDivertHandle;
  */
 typedef struct WinDivertFilterConfig_ {
     /* see https://reqrypt.org/windivert-doc.html#filter_language */
-    const char *    filter_string;
+    const char *filter_string;
     WINDIVERT_LAYER layer;
-    int16_t         priority;
-    uint64_t        flags;
+    int16_t priority;
+    uint64_t flags;
 }
 
 typedef struct WinDivertThreadVars_ {
     WinDivertHandle filter_handle;
+    /* only needed for setup/teardown; Recv/Send are internally synchronized */
+    SCMutex filter_handle_mutex;
 
     TmSlot *slot;
 
@@ -59,7 +61,7 @@ typedef struct WinDivertThreadVars_ {
 
 typedef struct WinDivertPacketVars_ {
     WinDivertThreadVars *wd_tv;
-    WINDIVERT_ADDRESS    addr;
+    WINDIVERT_ADDRESS addr;
     verdicted bool;
 } WinDivertPacketVars;
 

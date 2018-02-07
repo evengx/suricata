@@ -82,23 +82,27 @@ TmEcode NoWinDivertSupportExit(ThreadVars *tv, const void *initdata,
 #else /* implied we do have WinDivert support */
 
 /* forward declarations of internal functions */
+/* Receive functions */
 TmEcode ReceiveWinDivertLoop(ThreadVars *, void *, void *);
 TmEcode ReceiveWinDivertThreadInit(ThreadVars *, const void *, void **);
 TmECode ReceiveWinDivertThreadDeinit(ThreadVars *, void *);
 void ReceiveWinDivertThreadExitStats(ThreadVars *, void *);
 
+/* Verdict functions */
 TmEcode VerdictWinDivert(ThreadVars *, Packet *, void *, PacketQueue *,
                          PacketQueue *);
 TmEcode VerdictWinDivertThreadInit(ThreadVars *, const void *, void **);
 TmEcode VerdictWinDivertThreadDeinit(ThreadVars *, void *);
 
+/* Decode functions */
 TmEcode DecodeWinDivert(ThreadVars *, Packet *, void *, PacketQueue *,
                         PacketQueue *);
 TmEcode DecodeWinDivertThreadInit(ThreadVars *, const void *, void **);
 TmEcode DecodeWinDivertThreadDeinit(ThreadVars *, void *);
 
-static TmEcode WinDivertRecvPkt(WinDivertThreadVars *);
-static TmEcode WinDivertDoVerdict(Packet *);
+/* internal helper functions */
+static TmEcode WinDivertRecvHelper(WinDivertThreadVars *);
+static TmEcode WinDivertVerdictHelper(Packet *);
 static TmEcode WinDivertCloseHelper(WinDivertThreadVars *);
 
 void TmModuleReceiveWinDivertRegister(void)
@@ -152,7 +156,7 @@ TmEcode ReceiveWinDivertLoop(ThreadVars *tv, void *context, void *slot)
             SCReturnInt(TM_ECODE_OK);
         }
 
-        if (unlikely(WinDivertRecvPkt(wd_tv) != TM_ECODE_OK)) {
+        if (unlikely(WinDivertRecvHelper(wd_tv) != TM_ECODE_OK)) {
             SCReturnInt(TM_ECODE_FAILED);
         }
 
@@ -162,7 +166,7 @@ TmEcode ReceiveWinDivertLoop(ThreadVars *tv, void *context, void *slot)
     SCReturnInt(TM_ECODE_OK);
 }
 
-static TmEcode WinDivertRecvPkt(WinDivertThreadVars *wd_tv)
+static TmEcode WinDivertRecvHelper(WinDivertThreadVars *wd_tv)
 {
     SCEnter();
 
@@ -229,19 +233,21 @@ TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *initdata,
         SCReturnInt(TM_ECODE_FAILED);
     }
 
-    WinDivertThreadVars *wd_thread_vars = SCMalloc(sizeof(WinDivertThreadVars));
-    if (unlikely(wd_thread_vars == NULL)) {
+    WinDivertThreadVars *wd_tv = SCMalloc(sizeof(WinDivertThreadVars));
+    if (unlikely(wd_tv == NULL)) {
         SCReturnInt(TM_ECODE_FAILED);
     }
 
-    memset(wd_thread_vars, 0, sizeof(WinDivertThreadVars));
-    *context = wd_thread_vars;
+    memset(wd_tv, 0, sizeof(WinDivertThreadVars));
+    *context = wd_tv;
 
-    wd_thread_vars->filter_handle =
+    SCMutexInit(wd_tv->filter_handle_mutex, NULL);
+
+    wd_tv->filter_handle =
             WinDivertOpen(wd_filter_cfg->filter_string, wd_filter_cfg->layer,
                           wd_filter_cfg->priority, wd_filter_cfg->flags);
 
-    if (wd_thread_vars->filter_handle == INVALID_HANDLE_VALUE) {
+    if (wd_tv->filter_handle == INVALID_HANDLE_VALUE) {
         SCLogError(GetLastError(), "WinDivertOpen failed")
                 SCReturnInt(TM_ECODE_FAILED);
     }
@@ -295,7 +301,7 @@ TmEcode VerdictWinDivert(ThreadVars *tv, Packet *p, void *context,
     TmEcode ret = TM_ECODE_OK;
 
     /* \todo do we need to specifically handle tunnel packets like NFQ? */
-    ret = WinDivertDoVerdict(p);
+    ret = WinDivertVerdictHelper(p);
     if (ret != TM_ECODE_OK) {
         SCReturnInt(ret);
     }
@@ -306,7 +312,7 @@ TmEcode VerdictWinDivert(ThreadVars *tv, Packet *p, void *context,
 /**
  * \brief internal helper function to do the bulk of verdict work
  */
-static TmEcode WinDivertDoVerdict(Packet *p)
+static TmEcode WinDivertVerdictHelper(Packet *p)
 {
     p->windivert_v.verdicted = true;
 
@@ -436,20 +442,27 @@ TmEcode DecodeWinDivertThreadDeinit(ThreadVars *tv, void *context)
 /**
  * \brief helper function for use with ThreadDeinit functions
  */
-static TmEcode WinDivertCloseHelper(WinDivertThreadVars wd_tv *)
+static TmEcode WinDivertCloseHelper(WinDivertThreadVars *wd_tv)
 {
+    ret = TM_ECODE_OK;
+
+    SCMutexLock(wd_tv->filter_handle_mutex);
+
     /* check if there's nothing to close already */
     switch (wd_tv) {
-    case INVALID_HANDLE_VALUE:
-    case NULL:
-        SCReturnInt(TM_ECODE_OK);
+        case INVALID_HANDLE_VALUE:
+        case NULL:
+            goto unlock;
     }
 
     if (!WinDivertClose(wd_tv->filter_handle)) {
         SCLogError(GetLastError(), "WinDivertClose failed");
-        SCReturnInt(TM_ECODE_FAILED);
+        ret = TM_ECODE_FAILED;
+        goto unlock;
     }
 
+unlock:
+    SCMutexUnlock(wd_tv->filter_handle_mutex);
     SCReturnInt(TM_ECODE_OK);
 }
 
