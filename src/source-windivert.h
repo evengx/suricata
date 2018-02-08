@@ -54,6 +54,7 @@ typedef struct WinDivertThreadVars_ {
     uint32_t pkts;
     uint64_t bytes;
     uint32_t errs;
+    SCRWLock counters_mutex;
 
     CaptureStats stats;
 

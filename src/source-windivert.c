@@ -200,6 +200,11 @@ static TmEcode WinDivertRecvHelper(WinDivertThreadVars *wd_tv)
 
     p->windivert_v.wd_tv = wd_tv;
 
+    SCRWLockWRLock(wd_tv->counters_mutex);
+    wd_tv->pkts++;
+    wd_tv->bytes += GET_PKT_LEN(p);
+    SCRWLockUnlock(wd_tv->counters_mutex);
+
     /* Do the packet processing by calling TmThreadsSlotProcessPkt, this will,
      * depending on the running mode, pass the packet to the treatment functions
      * or push it to a packet pool. So processing time can vary.
@@ -242,6 +247,7 @@ TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *initdata,
     *context = wd_tv;
 
     SCMutexInit(wd_tv->filter_handle_mutex, NULL);
+    SCRWLockInit(wd_tv->counters_mutex, NULL);
 
     wd_tv->filter_handle =
             WinDivertOpen(wd_filter_cfg->filter_string, wd_filter_cfg->layer,
@@ -280,6 +286,8 @@ void ReceiveWinDivertThreadExitStats(ThreadVars *tv, void *context)
 {
     WinDivertThreadVars *wd_tv = (WinDivertThreadVars *)context;
 
+    SCRWLockRDLock(wd_tv->counters_mutex);
+
     SCLogInfo("(%s) Packets %" PRIu32 ", Bytes %" PRIu64 ", Errors %" PRIu32 "",
               tv->name, wd_tv->pkts, wd_tv->bytes, wd_tv->errs);
     SCLogInfo("(%s) Verdict: Accepted %" PRIu32 ", Dropped %" PRIu32
@@ -287,6 +295,8 @@ void ReceiveWinDivertThreadExitStats(ThreadVars *tv, void *context)
               tv->name, wd_tv->stats.counter_ips_accepted,
               wd_tv->stats.counter_ips_dropped,
               wd_tv->stats.counter_ips_replaced);
+
+    SCRWLockUnlock(wd_tv->counters_mutex);
 }
 
 /**
@@ -463,7 +473,7 @@ static TmEcode WinDivertCloseHelper(WinDivertThreadVars *wd_tv)
 
 unlock:
     SCMutexUnlock(wd_tv->filter_handle_mutex);
-    SCReturnInt(TM_ECODE_OK);
+    SCReturnInt(ret);
 }
 
 #endif /* WINDIVERT */
