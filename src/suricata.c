@@ -95,6 +95,8 @@
 #include "source-netmap.h"
 #include "source-mpipe.h"
 
+#include "source-windivert.h"
+
 #include "respond-reject.h"
 
 #include "flow.h"
@@ -907,6 +909,11 @@ void RegisterAllModules(void)
     /* nflog */
     TmModuleReceiveNFLOGRegister();
     TmModuleDecodeNFLOGRegister();
+
+    /* windivert */
+    TmModuleReceiveWinDivertRegister();
+    TmModuleVerdictWinDivertRegister();
+    TmModuleDecodeWinDivertRegister();
 }
 
 static TmEcode LoadYamlConfig(SCInstance *suri)
