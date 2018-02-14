@@ -940,6 +940,51 @@
         fi
     fi
 
+  # WinDivert support
+    AC_ARG_ENABLE(windivert,
+        AS_HELP_STRING([--enable-windivert],[Enable WinDivert support [default=no]]),,
+        [enable_windivert="no"])
+    
+  # WinDivert can only be enabled on Windows builds
+    AC_CHECK_DECL([OS_WIN32],,[enable_windivert="no"])
+
+    if test "x$enable_windivert" = "xyes"; then
+        AC_DEFINE_UNQUOTED([WINDIVERT],[1],[Enable Windows WinDivert support for inline IDP])
+
+        AC_ARG_WITH(windivert_files,
+                [  --with-windivert-files=DIR  WinDivert base directory],
+                [with_windivert_files="$withval"],[with_windivert_files="no"])
+
+        windivert_includes="${windivert_files}/include"
+        windivert_libraries="no"
+        case $host in
+            *-w64-mingw32*)
+                windivert_libraries="${windivert_files}/amd64"
+            ;;
+            *-w32-mingw32*)
+                windivert_libraries="${windivert_files}/x86"
+            ;;
+        esac
+
+        if test "$with_windivert_files" != "no"; then
+            CPPFLAGS="${CPPFLAGS} -I${windivert_includes}"
+            LDFLAGS="${LDFLAGS} -L${windivert_libraries}"
+        fi
+
+        WINDIVERT_INC=""
+        AC_CHECK_HEADER(windivert.h,,WINDIVERT_INC="no")
+
+        WINDIVERT_LIB=""
+        AC_CHECK_LIB(windivert, WinDivertOpen,, WINDIVERT_LIB="no")
+
+        if test "$WINDIVERT_LIB" = "no" || test "$WINDIVERT_INC" = "no" then
+            echo "    ERROR! WinDivert not found, go get it from"
+            echo "    https://www.reqrypt.org/windivert.html"
+            exit 1
+        fi
+    fi
+  # /WinDivert
+
   # prelude
     AC_ARG_ENABLE(prelude,
             AS_HELP_STRING([--enable-prelude], [Enable Prelude support for alerts]),,[enable_prelude=no])
@@ -2133,6 +2178,7 @@ SURICATA_BUILD_CONF="Suricata Configuration:
   Netmap support:                          ${enable_netmap}
   DAG enabled:                             ${enable_dag}
   Napatech enabled:                        ${enable_napatech}
+  WinDivert enabled:                       ${enable_windivert}
 
   Unix socket enabled:                     ${enable_unixsocket}
   Detection enabled:                       ${enable_detection}
