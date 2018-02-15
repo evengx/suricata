@@ -28,7 +28,7 @@
 
 #ifdef WINDIVERT
 
-typedef void *WinDivertHandle;
+#include "windivert.h"
 
 /**
  * \brief WinDivertFilterConfig is the initial configuration of the filter.
@@ -41,29 +41,14 @@ typedef struct WinDivertFilterConfig_ {
     WINDIVERT_LAYER layer;
     int16_t priority;
     uint64_t flags;
-}
+} WinDivertFilterConfig;
 
-typedef struct WinDivertThreadVars_ {
-    WinDivertHandle filter_handle;
-    /* only needed for setup/teardown; Recv/Send are internally synchronized */
-    SCMutex filter_handle_mutex;
-
-    TmSlot *slot;
-
-    /* counters */
-    uint32_t pkts;
-    uint64_t bytes;
-    uint32_t errs;
-    SCRWLock counters_mutex;
-
-    CaptureStats stats;
-
-} WinDivertThreadVars;
+typedef struct WinDivertThreadVars_ WinDivertThreadVars;
 
 typedef struct WinDivertPacketVars_ {
     WinDivertThreadVars *wd_tv;
     WINDIVERT_ADDRESS addr;
-    verdicted bool;
+    bool verdicted;
 } WinDivertPacketVars;
 
 int WinDivertRegisterFilter(char *filter);
