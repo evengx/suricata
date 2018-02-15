@@ -955,14 +955,14 @@
                 [  --with-windivert-files=DIR  WinDivert base directory],
                 [with_windivert_files="$withval"],[with_windivert_files="no"])
 
-        windivert_includes="${windivert_files}/include"
+        windivert_includes="${with_windivert_files}/include"
         windivert_libraries="no"
         case $host in
             *-w64-mingw32*)
-                windivert_libraries="${windivert_files}/amd64"
+                windivert_libraries="${with_windivert_files}/amd64"
             ;;
             *-w32-mingw32*)
-                windivert_libraries="${windivert_files}/x86"
+                windivert_libraries="${with_windivert_files}/x86"
             ;;
         esac
 
@@ -975,11 +975,13 @@
         AC_CHECK_HEADER(windivert.h,,WINDIVERT_INC="no")
 
         WINDIVERT_LIB=""
-        AC_CHECK_LIB(windivert, WinDivertOpen,, WINDIVERT_LIB="no")
+        AC_CHECK_LIB(WinDivert, WinDivertOpen,, WINDIVERT_LIB="no")
 
-        if test "$WINDIVERT_LIB" = "no" || test "$WINDIVERT_INC" = "no" then
+        if test "$WINDIVERT_LIB" = "no" || test "$WINDIVERT_INC" = "no"; then
+            echo
             echo "    ERROR! WinDivert not found, go get it from"
             echo "    https://www.reqrypt.org/windivert.html"
+            echo
             exit 1
         fi
     fi
@@ -1321,7 +1323,7 @@
 
         AC_ARG_WITH(libhtp_includes,
                 [  --with-libhtp-includes=DIR  libhtp include directory],
-                [with_libhtp_includes="$withval"],[with_libhtp_includes=no])
+                [with_libhtp_includes="$withval"],[with_libhtp_includes="no"])
         AC_ARG_WITH(libhtp_libraries,
                 [  --with-libhtp-libraries=DIR    libhtp library directory],
                 [with_libhtp_libraries="$withval"],[with_libhtp_libraries="no"])
