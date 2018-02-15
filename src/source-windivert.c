@@ -83,7 +83,8 @@ TmEcode NoWinDivertSupportExit(ThreadVars *tv, const void *initdata,
 
 typedef void *WinDivertHandle;
 
-typedef struct WinDivertThreadVars_ WinDivertThreadVars;{
+typedef struct WinDivertThreadVars_ WinDivertThreadVars;
+{
     WinDivertHandle filter_handle;
     /* only needed for setup/teardown; Recv/Send are internally synchronized */
     SCMutex filter_handle_mutex;
@@ -97,8 +98,15 @@ typedef struct WinDivertThreadVars_ WinDivertThreadVars;{
     SCRWLock counters_mutex;
 
     CaptureStats stats;
+}
+WinDivertThreadVars;
 
-} WinDivertThreadVars;
+static WinDivertThreadVars *g_wd_tv;
+
+void *WinDivertGetThread(int thread)
+{
+    return g_wd_tv;
+}
 
 /* forward declarations of internal functions */
 /* Receive functions */

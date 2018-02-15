@@ -52,6 +52,7 @@ typedef struct WinDivertPacketVars_ {
 } WinDivertPacketVars;
 
 int WinDivertRegisterFilter(char *filter);
+void *WinDivertGetThread(int thread);
 
 #endif /* WINDIVERT */
 #endif /* __SOURCE_WINDIVERT_H__ */

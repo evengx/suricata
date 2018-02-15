@@ -39,6 +39,7 @@
 
 static const char *default_mode;
 
+
 const char *RunModeIpsWinDivertGetDefaultMode(void) { return default_mode; }
 
 void RunModeIpsWinDivertRegister(void)
