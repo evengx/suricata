@@ -64,6 +64,7 @@ enum PktSrcEnum {
 #include "source-af-packet.h"
 #include "source-mpipe.h"
 #include "source-netmap.h"
+#include "source-windivert.h"
 #ifdef HAVE_PF_RING_FLOW_OFFLOAD
 #include "source-pfring.h"
 #endif
