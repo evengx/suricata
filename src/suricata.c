@@ -96,6 +96,7 @@
 #include "source-mpipe.h"
 
 #include "source-windivert.h"
+#include "source-windivert-prototypes.h"
 
 #include "respond-reject.h"
 
@@ -1990,11 +1991,11 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
             suri->sig_file = optarg;
             suri->sig_file_exclusive = TRUE;
             break;
-        case 'w'
+        case 'w':
 #ifdef WINDIVERT
             if (suri->run_mode == RUNMODE_UNKNOWN) {
                 suri->run_mode = RUNMODE_WINDIVERT;
-                if (WindivertRegisterFilter(optarg) == -1) {
+                if (WinDivertRegisterFilter(optarg) == -1) {
                     return TM_ECODE_FAILED;
                 }
             } else if (suri->run_mode == RUNMODE_WINDIVERT) {

@@ -24,9 +24,8 @@
 #ifndef __SOURCE_WINDIVERT_PROTOTYPES_H__
 #define __SOURCE_WINDIVERT_PROTOTYPES_H__
 
-void TmModuleReceiveWinDivertRegister (void);
-void TmModuleVerdictWinDivertRegister (void);
-void TmModuleDecodeWinDivertRegister (void);
+void TmModuleReceiveWinDivertRegister(void);
+void TmModuleVerdictWinDivertRegister(void);
+void TmModuleDecodeWinDivertRegister(void);
 
 #endif /* __SOURCE_WINDIVERT_PROTOTYPES_H__ */
-
