@@ -2,6 +2,7 @@ noinst_HEADERS = action-globals.h \
     app-layer-nbss.h app-layer-dcerpc-common.h \
     debug.h \
 	flow-private.h queue.h source-nfq-prototypes.h \
+    source-windivert-prototypes.h \
 	suricata-common.h threadvars.h util-binsearch.h \
     util-validate.h
 bin_PROGRAMS = suricata
@@ -352,7 +353,6 @@ source-pcap-file-directory-helper.c source-pcap-file-directory-helper.h \
 source-pcap-file-helper.c source-pcap-file-helper.h \
 source-pfring.c source-pfring.h \
 source-windivert.c source-windivert.h \
-source-windivert-prototypes.c source-windivert-prototypes.h \
 stream.c stream.h \
 stream-tcp.c stream-tcp.h stream-tcp-private.h \
 stream-tcp-inline.c stream-tcp-inline.h \

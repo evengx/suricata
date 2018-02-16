@@ -81,9 +81,13 @@ TmEcode NoWinDivertSupportExit(ThreadVars *tv, const void *initdata,
 
 #else /* implied we do have WinDivert support */
 
+#define WINDIVERT_FILTER_STRING_MAX 2048
+
 typedef void *WinDivertHandle;
 
 typedef struct WinDivertThreadVars_ {
+    WinDivertFilterConfig filter_cfg;
+
     WinDivertHandle filter_handle;
     /* only needed for setup/teardown; Recv/Send are internally synchronized */
     SCMutex filter_handle_mutex;
@@ -104,6 +108,38 @@ static WinDivertThreadVars *g_wd_tv;
 void *WinDivertGetThread(int thread)
 {
     return g_wd_tv;
+}
+
+int WinDivertRegisterFilter(char *filter)
+{
+    SC_Enter();
+
+    const char *errorStr;
+    uint32_t errorPos;
+
+    bool valid = WinDivertHelperCheckFilter(filter, WINDIVERT_LAYER_NETWORK,
+                                            &errorStr, &errorPos);
+
+    if (!valid) {
+        SCLogWarning(
+                SC_ERR_WINDIVERT_INVALID_FILTER,
+                "Invalid filter supplied to WinDivert: %s at position %" PRId32
+                "",
+                errorStr, errorPos);
+        SCReturnInt(SC_ERR_WINDIVERT_INVALID_FILTER);
+    }
+
+    size_t filterLen = strlen(filter);
+    size_t copyLen = strlcpy(g_wd_tv->filter_config->filter_string, filter,
+                             sizeof(g_wd_tv->filter_config->filter_string));
+    if (filterLen > copyLen) {
+        SCLogWarning(SC_ERR_WINDIVERT_TOOLONG_FILTER,
+                     "Filter length exceeds storage by %" PRId32 " bytes",
+                     filterLen - copyLen);
+        SCReturnInt(SC_ERR_WINDIVERT_TOOLONG_FILTER);
+    }
+
+    return 0;
 }
 
 /* forward declarations of internal functions */

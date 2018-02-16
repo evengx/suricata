@@ -30,6 +30,8 @@
 
 #include "windivert.h"
 
+#define WINDIVERT_FILTER_STRING_MAX 2048
+
 /**
  * \brief WinDivertFilterConfig is the initial configuration of the filter.
  *
@@ -37,7 +39,7 @@
  */
 typedef struct WinDivertFilterConfig_ {
     /* see https://reqrypt.org/windivert-doc.html#filter_language */
-    const char *filter_string;
+    char filter_string[WINDIVERT_FILTER_STRING_MAX+1];
     WINDIVERT_LAYER layer;
     int16_t priority;
     uint64_t flags;
