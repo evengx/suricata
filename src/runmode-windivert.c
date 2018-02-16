@@ -23,12 +23,12 @@
  * Handling of WinDivert runmodes.
  */
 
-#include "runmode-windivert.h"
-#include "conf.h"
-#include "output.h"
-#include "runmodes.h"
 #include "suricata-common.h"
 #include "tm-threads.h"
+#include "conf.h"
+#include "runmodes.h"
+#include "runmode-windivert.h"
+#include "output.h"
 
 #include "util-affinity.h"
 #include "util-cpu.h"
@@ -36,6 +36,7 @@
 #include "util-device.h"
 #include "util-runmodes.h"
 #include "util-time.h"
+
 
 static const char *default_mode;
 
