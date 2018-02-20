@@ -32,13 +32,16 @@
 
 #define WINDIVERT_FILTER_STRING_MAX 2048
 
+typedef void *WinDivertHandle;
+
 /**
  * \brief WinDivertQueueVars is the queue configuration and other miscellaneous
  * information about the specific queue/filter.
  *
  * see https://reqrypt.org/windivert-doc.html#divert_open for more info
  */
-typedef struct WinDivertQueueVars_ {
+typedef struct WinDivertQueueVars_
+{
     int queue_num;
 
     /* see https://reqrypt.org/windivert-doc.html#filter_language */
@@ -61,15 +64,15 @@ typedef struct WinDivertQueueVars_ {
     SCMutex counters_mutex;
 } WinDivertQueueVars;
 
-typedef struct WinDivertPacketVars_ {
+typedef struct WinDivertPacketVars_
+{
     int thread_num;
 
     WINDIVERT_ADDRESS addr;
     bool verdicted;
 } WinDivertPacketVars;
 
-int WinDivertRegisterQueue(char *filter, WINDIVERT_LAYER layer,
-                           int16_t priority);
+int WinDivertRegisterQueue(char *cmdline);
 void *WinDivertGetThread(int thread);
 void *WinDivertGetQueue(int queue);
 

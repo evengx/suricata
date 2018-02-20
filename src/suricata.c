@@ -1995,11 +1995,11 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
 #ifdef WINDIVERT
             if (suri->run_mode == RUNMODE_UNKNOWN) {
                 suri->run_mode = RUNMODE_WINDIVERT;
-                if (WinDivertRegisterFilter(optarg) == -1) {
+                if (WinDivertRegisterQueue(optarg) == -1) {
                     return TM_ECODE_FAILED;
                 }
             } else if (suri->run_mode == RUNMODE_WINDIVERT) {
-                if (WinDivertRegisterFilter(optarg) == -1) {
+                if (WinDivertRegisterQueue(optarg) == -1) {
                     return TM_ECODE_FAILED;
                 }
             } else {
