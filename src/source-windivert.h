@@ -33,28 +33,45 @@
 #define WINDIVERT_FILTER_STRING_MAX 2048
 
 /**
- * \brief WinDivertFilterConfig is the initial configuration of the filter.
+ * \brief WinDivertQueueVars is the queue configuration and other miscellaneous
+ * information about the specific queue/filter.
  *
  * see https://reqrypt.org/windivert-doc.html#divert_open for more info
  */
-typedef struct WinDivertFilterConfig_ {
+typedef struct WinDivertQueueVars_ {
+    int queue_num;
+
     /* see https://reqrypt.org/windivert-doc.html#filter_language */
-    char filter_string[WINDIVERT_FILTER_STRING_MAX+1];
+    char filter_str[WINDIVERT_FILTER_STRING_MAX + 1];
     WINDIVERT_LAYER layer;
     int16_t priority;
     uint64_t flags;
-} WinDivertFilterConfig;
 
-typedef struct WinDivertThreadVars_ WinDivertThreadVars;
+    WinDivertHandle filter_handle;
+    /* only needed for setup/teardown; Recv/Send are internally synchronized */
+    SCMutex filter_init_mutex;
+
+    /* counters */
+    uint32_t pkts;
+    uint64_t bytes;
+    uint32_t errs;
+    uint32_t accepted;
+    uint32_t dropped;
+    uint32_t replaced;
+    SCMutex counters_mutex;
+} WinDivertQueueVars;
 
 typedef struct WinDivertPacketVars_ {
-    WinDivertThreadVars *wd_tv;
+    int thread_num;
+
     WINDIVERT_ADDRESS addr;
     bool verdicted;
 } WinDivertPacketVars;
 
-int WinDivertRegisterFilter(char *filter);
+int WinDivertRegisterQueue(char *filter, WINDIVERT_LAYER layer,
+                           int16_t priority);
 void *WinDivertGetThread(int thread);
+void *WinDivertGetQueue(int queue);
 
 #endif /* WINDIVERT */
 #endif /* __SOURCE_WINDIVERT_H__ */
