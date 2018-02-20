@@ -104,6 +104,7 @@ bool IsRunModeOffline(int run_mode_to_check);
 #include "runmode-nflog.h"
 #include "runmode-unix-socket.h"
 #include "runmode-netmap.h"
+#include "runmode-windivert.h"
 
 int threading_set_cpu_affinity;
 extern float threading_detect_ratio;
