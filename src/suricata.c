@@ -651,6 +651,9 @@ static void PrintUsage(const char *progname)
 #ifdef HAVE_MPIPE
     printf("\t--mpipe                              : run with tilegx mpipe interface(s)\n");
 #endif
+#ifdef WINDIVERT
+    printf("\t--windivert <id> <filter>            : run in inline windivert mode");
+#endif
     printf("\t--set name=value                     : set a configuration value\n");
     printf("\n");
     printf("\nTo run the engine with default configuration on "
@@ -1537,6 +1540,9 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
 #ifdef HAVE_MPIPE
         {"mpipe", optional_argument, 0, 0},
 #endif
+#ifdef WINDIVERT
+        {"windivert", optional_argument, 0, 0},
+#endif
         {"set", required_argument, 0, 0},
 #ifdef HAVE_NFLOG
         {"nflog", optional_argument, 0, 0},
@@ -1815,6 +1821,28 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                 }
             }
 #endif
+#ifdef WINDIVERT
+            else if(strcmp((long_opts[option_index]).name, "windivert") == 0) {
+                if (suri->run_mode == RUNMODE_UNKNOWN) {
+                    suri->run_mode = RUNMODE_WINDIVERT;
+                    if (WinDivertRegisterQueue(optarg) == -1) {
+                        exit(EXIT_FAILURE);
+                    }
+                } else if (suri->run_mode == RUNMODE_WINDIVERT) {
+                    if (WinDivertRegisterQueue(optarg) == -1) {
+                        exit(EXIT_FAILURE);
+                    }
+                } else {
+                    SCLogError(SC_ERR_MULTIPLE_RUN_MODE, "more than one run mode "
+                                                        "has been specified");
+                    PrintUsage(argv[0]);
+                    exit(EXIT_FAILURE);
+                }
+            }
+#else
+            SCLogError(SC_ERR_WINDIVERT_NOSUPPORT,"WinDivert not enabled. Make sure to pass --enable-windivert to configure when building.");
+            return TM_ECODE_FAILED;            
+#endif /* WINDIVERT */
             else if (strcmp((long_opts[option_index]).name, "set") == 0) {
                 if (optarg != NULL) {
                     /* Quick validation. */
@@ -1991,28 +2019,6 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
             suri->sig_file = optarg;
             suri->sig_file_exclusive = TRUE;
             break;
-        case 'w':
-#ifdef WINDIVERT
-            if (suri->run_mode == RUNMODE_UNKNOWN) {
-                suri->run_mode = RUNMODE_WINDIVERT;
-                if (WinDivertRegisterQueue(optarg) == -1) {
-                    return TM_ECODE_FAILED;
-                }
-            } else if (suri->run_mode == RUNMODE_WINDIVERT) {
-                if (WinDivertRegisterQueue(optarg) == -1) {
-                    return TM_ECODE_FAILED;
-                }
-            } else {
-                SCLogError(SC_ERR_MULTIPLE_RUN_MODE, "more than one run mode "
-                                                     "has been specified");
-                PrintUsage(argv[0]);
-                return TM_ECODE_FAILED;
-            }
-#else
-            SCLogError(SC_ERR_WINDIVERT_NOSUPPORT,"WinDivert not enabled. Make sure to pass --enable-windivert to configure when building.");
-            return TM_ECODE_FAILED;            
-#endif /* WINDIVERT */
-        break;
         case 'u':
 #ifdef UNITTESTS
             if (suri->run_mode == RUNMODE_UNKNOWN) {

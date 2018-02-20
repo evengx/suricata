@@ -147,7 +147,11 @@ static const char *RunModeTranslateModeToName(int runmode)
         case RUNMODE_UNIX_SOCKET:
             return "UNIX_SOCKET";
         case RUNMODE_WINDIVERT:
+#ifdef WINDIVERT
             return "WINDIVERT";
+#else
+            return "WINDIVERT(DISABLED)";
+#endif
         default:
             SCLogError(SC_ERR_UNKNOWN_RUN_MODE, "Unknown runtime mode. Aborting");
             exit(EXIT_FAILURE);
@@ -330,6 +334,11 @@ void RunModeDispatch(int runmode, const char *custom_mode)
             case RUNMODE_NFLOG:
                 custom_mode = RunModeIdsNflogGetDefaultMode();
                 break;
+#ifdef WINDIVERT
+            case RUNMODE_WINDIVERT:
+                custom_mode = RunModeIpsWinDivertGetDefaultMode();
+                break;
+#endif
             default:
                 SCLogError(SC_ERR_UNKNOWN_RUN_MODE, "Unknown runtime mode. Aborting");
                 exit(EXIT_FAILURE);
