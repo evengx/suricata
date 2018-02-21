@@ -1541,7 +1541,7 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
         {"mpipe", optional_argument, 0, 0},
 #endif
 #ifdef WINDIVERT
-        {"windivert", optional_argument, 0, 0},
+        {"windivert", required_argument, 0, 0},
 #endif
         {"set", required_argument, 0, 0},
 #ifdef HAVE_NFLOG
