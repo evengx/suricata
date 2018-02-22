@@ -72,7 +72,7 @@ typedef struct WinDivertPacketVars_
     bool verdicted;
 } WinDivertPacketVars;
 
-int WinDivertRegisterQueue(char *cmdline);
+int WinDivertRegisterQueue(char *filter_str);
 void *WinDivertGetThread(int thread);
 void *WinDivertGetQueue(int queue);
 

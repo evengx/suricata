@@ -40,7 +40,6 @@
 #include "source-windivert-prototypes.h"
 #include "source-windivert.h"
 
-#define WINDIVERT 1
 #ifndef WINDIVERT
 /* Gracefully handle the case where no WinDivert support is compiled in */
 
@@ -128,23 +127,11 @@ void *WinDivertGetQueue(int n)
  * \retval 0 on success
  * \retval -1 on failure
  */
-int WinDivertRegisterQueue(char *cmdline)
+int WinDivertRegisterQueue(char *filter_str)
 {
 
     SCEnter();
     int ret = 0;
-
-    /* extract the queue number from the command line and obtain the filter
-     * string offset */
-    uint16_t queue_num = 0;
-    int queue_num_len = ByteExtractStringUint16(&queue_num, 10, 0, cmdline);
-    if (queue_num_len < 0)
-    {
-        SCLogError(SC_ERR_INVALID_ARGUMENT,
-                   "specified queue number %s is not valid", cmdline);
-        return -1;
-    }
-    const char *filter_str = cmdline + queue_num_len;
 
     /* validate the filter string */
     const char *error_str;
@@ -155,9 +142,9 @@ int WinDivertRegisterQueue(char *cmdline)
     {
         SCLogWarning(
             SC_ERR_WINDIVERT_INVALID_FILTER,
-            "Invalid filter supplied to WinDivert: %s at position %" PRId32
+            "Invalid filter \"%s\" supplied to WinDivert: %s at position %" PRId32
             "",
-            error_str, error_pos);
+            filter_str, error_str, error_pos);
         SCReturnInt(SC_ERR_WINDIVERT_INVALID_FILTER);
     }
 
@@ -184,7 +171,7 @@ int WinDivertRegisterQueue(char *cmdline)
 
     /* init queue vars */
     WinDivertQueueVars *wd_qv = &g_wd_qv[g_wd_num];
-    wd_qv->queue_num = queue_num;
+    wd_qv->queue_num = g_wd_num;
 
     /* copy filter to persistent storage */
     size_t filter_len = strlen(filter_str);
@@ -351,7 +338,8 @@ static TmEcode WinDivertRecvHelper(ThreadVars *tv, WinDivertThreadVars *wd_tv)
         SCMutexUnlock(&wd_qv->counters_mutex);
 #endif /* COUNTERS */
 
-        SCLogError(GetLastError(), "WinDivertRecv failed");
+        SCLogInfo("WinDivertRecv failed: error %" PRIu32 "",
+                  (uint32_t)(GetLastError()));
         SCReturnInt(TM_ECODE_FAILED);
     }
 
@@ -408,8 +396,8 @@ TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *initdata,
         SCReturnInt(TM_ECODE_FAILED);
     }
 
-    SCMutexInit(wd_qv->filter_init_mutex, NULL);
-    SCRWLockInit(wd_qv->counters_mutex, NULL);
+    SCMutexInit(&wd_qv->filter_init_mutex, NULL);
+    SCMutexInit(&wd_qv->counters_mutex, NULL);
 
     SCMutexLock(&wd_qv->filter_init_mutex);
     /* does the queue already have an active handle? */
@@ -426,7 +414,8 @@ TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *initdata,
                                          wd_qv->priority, wd_qv->flags);
     if (wd_qv->filter_handle == INVALID_HANDLE_VALUE)
     {
-        SCLogError(GetLastError(), "WinDivertOpen failed");
+        SCLogInfo("WinDivertOpen failed, error: %" PRIu32 "",
+                (uint32_t)(GetLastError()));
         ret = TM_ECODE_FAILED;
         goto unlock;
     }
@@ -700,12 +689,16 @@ static TmEcode WinDivertCloseHelper(WinDivertThreadVars *wd_tv)
 
     if (!WinDivertClose(wd_qv->filter_handle))
     {
-        SCLogError(GetLastError(), "WinDivertClose failed");
+        SCLogInfo("WinDivertClose failed: error %" PRIu32 "",
+                (uint32_t)(GetLastError()));
         ret = TM_ECODE_FAILED;
         goto unlock;
     }
 
     wd_qv->filter_handle = NULL;
+
+    SCMutexDestroy(&wd_qv->filter_init_mutex);
+    SCMutexDestroy(&wd_qv->counters_mutex);
 
 unlock:
     SCMutexUnlock(&wd_qv->filter_init_mutex);
