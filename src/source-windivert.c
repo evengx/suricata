@@ -191,6 +191,9 @@ int WinDivertRegisterQueue(char *filter_str)
         g_wd_num;     /* priority set in the order filters are defined */
     wd_qv->flags = 0; /* normal inline function */
 
+    SCMutexInit(&wd_qv->filter_init_mutex, NULL);
+    SCMutexInit(&wd_qv->counters_mutex, NULL);
+
     g_wd_num++;
 
 unlock:
@@ -201,7 +204,7 @@ unlock:
         /* not really a "device" identical to nfq/ipfw, but best descriptor */
         LiveRegisterDevice(filter_str);
 
-        SCLogDebug("Queue %" PRId16 " registered", queue_num);
+        SCLogDebug("Queue %" PRId16 " registered", wd_qv->queue_num);
     }
 
     return ret;
@@ -396,9 +399,6 @@ TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *initdata,
         SCReturnInt(TM_ECODE_FAILED);
     }
 
-    SCMutexInit(&wd_qv->filter_init_mutex, NULL);
-    SCMutexInit(&wd_qv->counters_mutex, NULL);
-
     SCMutexLock(&wd_qv->filter_init_mutex);
     /* does the queue already have an active handle? */
     if (wd_qv->filter_handle != NULL &&
@@ -414,8 +414,8 @@ TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *initdata,
                                          wd_qv->priority, wd_qv->flags);
     if (wd_qv->filter_handle == INVALID_HANDLE_VALUE)
     {
-        SCLogInfo("WinDivertOpen failed, error: %" PRIu32 "",
-                (uint32_t)(GetLastError()));
+        SCLogError(SC_ERR_FATAL, "WinDivertOpen failed, error: %" PRIu32 "",
+                   (uint32_t)(GetLastError()));
         ret = TM_ECODE_FAILED;
         goto unlock;
     }
@@ -445,7 +445,7 @@ TmEcode ReceiveWinDivertThreadDeinit(ThreadVars *tv, void *data)
 
     WinDivertThreadVars *wd_tv = (WinDivertThreadVars *)data;
 
-    SCReturnInt(WinDivertCloseHelper(wd_tv));
+    SCReturnCT(WinDivertCloseHelper(wd_tv), "TmEcode");
 }
 
 /**
@@ -504,6 +504,7 @@ TmEcode VerdictWinDivert(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq,
  */
 static TmEcode WinDivertVerdictHelper(ThreadVars *tv, Packet *p)
 {
+    SCEnter();
     WinDivertThreadVars *wd_tv = WinDivertGetThread(p->windivert_v.thread_num);
 
     /* update counters */
@@ -584,7 +585,7 @@ TmEcode VerdictWinDivertThreadDeinit(ThreadVars *tv, void *data)
 
     WinDivertThreadVars *wd_tv = (WinDivertThreadVars *)data;
 
-    SCReturnInt(WinDivertCloseHelper(wd_tv));
+    SCReturnCT(WinDivertCloseHelper(wd_tv), "TmEcode");
 }
 
 /**
@@ -689,8 +690,8 @@ static TmEcode WinDivertCloseHelper(WinDivertThreadVars *wd_tv)
 
     if (!WinDivertClose(wd_qv->filter_handle))
     {
-        SCLogInfo("WinDivertClose failed: error %" PRIu32 "",
-                (uint32_t)(GetLastError()));
+        SCLogError(SC_ERR_FATAL, "WinDivertClose failed: error %" PRIu32 "",
+                   (uint32_t)(GetLastError()));
         ret = TM_ECODE_FAILED;
         goto unlock;
     }

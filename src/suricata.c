@@ -652,7 +652,7 @@ static void PrintUsage(const char *progname)
     printf("\t--mpipe                              : run with tilegx mpipe interface(s)\n");
 #endif
 #ifdef WINDIVERT
-    printf("\t--windivert <filter>                 : run in inline windivert mode");
+    printf("\t--windivert <filter>                 : run in inline windivert mode\n");
 #endif
     printf("\t--set name=value                     : set a configuration value\n");
     printf("\n");
