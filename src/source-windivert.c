@@ -68,14 +68,13 @@ void TmModuleDecodeWinDivertRegister(void)
     tmm_modules[TMM_DECODEWINDIVERT].flags = TM_FLAG_DECODE_TM;
 }
 
-TmEcode NoWinDivertSupportExit(ThreadVars *tv, const void *initdata,
-                               void **data)
+TmEcode NoWinDivertSupportExit(
+        ThreadVars *tv, const void *initdata, void **data)
 {
-    SCLogError(
-        SC_ERR_WINDIVERT_NOSUPPORT,
-        "Error creating thread %s: you do not have support for WinDivert "
-        "enabled; please recompile with --enable-windivert",
-        tv->name);
+    SCLogError(SC_ERR_WINDIVERT_NOSUPPORT,
+            "Error creating thread %s: you do not have support for WinDivert "
+            "enabled; please recompile with --enable-windivert",
+            tv->name);
     exit(EXIT_FAILURE);
 }
 
@@ -102,8 +101,7 @@ static SCMutex g_wd_init_lock;
 
 void *WinDivertGetThread(int n)
 {
-    if (n >= g_wd_num)
-    {
+    if (n >= g_wd_num) {
         return NULL;
     }
     return (void *)&g_wd_tv[n];
@@ -111,8 +109,7 @@ void *WinDivertGetThread(int n)
 
 void *WinDivertGetQueue(int n)
 {
-    if (n >= g_wd_num)
-    {
+    if (n >= g_wd_num) {
         return NULL;
     }
     return (void *)&g_wd_qv[n];
@@ -136,30 +133,26 @@ int WinDivertRegisterQueue(char *filter_str)
     /* validate the filter string */
     const char *error_str;
     uint32_t error_pos;
-    bool valid = WinDivertHelperCheckFilter(filter_str, WINDIVERT_LAYER_NETWORK,
-                                            &error_str, &error_pos);
-    if (!valid)
-    {
-        SCLogWarning(
-            SC_ERR_WINDIVERT_INVALID_FILTER,
-            "Invalid filter \"%s\" supplied to WinDivert: %s at position %" PRId32
-            "",
-            filter_str, error_str, error_pos);
+    bool valid = WinDivertHelperCheckFilter(
+            filter_str, WINDIVERT_LAYER_NETWORK, &error_str, &error_pos);
+    if (!valid) {
+        SCLogWarning(SC_ERR_WINDIVERT_INVALID_FILTER,
+                "Invalid filter \"%s\" supplied to WinDivert: %s at position "
+                "%" PRId32 "",
+                filter_str, error_str, error_pos);
         SCReturnInt(SC_ERR_WINDIVERT_INVALID_FILTER);
     }
 
     /* initialize the queue */
     SCMutexLock(&g_wd_init_lock);
 
-    if (g_wd_num >= WINDIVERT_MAX_QUEUE)
-    {
+    if (g_wd_num >= WINDIVERT_MAX_QUEUE) {
         SCLogError(SC_ERR_INVALID_ARGUMENT,
-                   "Too many WinDivert queues specified %" PRId32 "", g_wd_num);
+                "Too many WinDivert queues specified %" PRId32 "", g_wd_num);
         ret = -1;
         goto unlock;
     }
-    if (g_wd_num == 0)
-    {
+    if (g_wd_num == 0) {
         /* on first registration, zero-initialize all array structs */
         memset(&g_wd_tv, 0, sizeof(g_wd_tv));
         memset(&g_wd_qv, 0, sizeof(g_wd_qv));
@@ -176,19 +169,18 @@ int WinDivertRegisterQueue(char *filter_str)
     /* copy filter to persistent storage */
     size_t filter_len = strlen(filter_str);
     size_t copy_len =
-        strlcpy(wd_qv->filter_str, filter_str, sizeof(wd_qv->filter_str));
-    if (filter_len > copy_len)
-    {
+            strlcpy(wd_qv->filter_str, filter_str, sizeof(wd_qv->filter_str));
+    if (filter_len > copy_len) {
         SCLogWarning(SC_ERR_WINDIVERT_TOOLONG_FILTER,
-                     "Queue length exceeds storage by %" PRId32 " bytes",
-                     (int32_t)(filter_len - copy_len));
+                "Queue length exceeds storage by %" PRId32 " bytes",
+                (int32_t)(filter_len - copy_len));
         ret = -1;
         goto unlock;
     }
 
     wd_qv->layer = WINDIVERT_LAYER_NETWORK;
     wd_qv->priority =
-        g_wd_num;     /* priority set in the order filters are defined */
+            g_wd_num; /* priority set in the order filters are defined */
     wd_qv->flags = 0; /* normal inline function */
 
     SCMutexInit(&wd_qv->filter_init_mutex, NULL);
@@ -199,8 +191,7 @@ int WinDivertRegisterQueue(char *filter_str)
 unlock:
     SCMutexUnlock(&g_wd_init_lock);
 
-    if (ret == 0)
-    {
+    if (ret == 0) {
         /* not really a "device" identical to nfq/ipfw, but best descriptor */
         LiveRegisterDevice(filter_str);
 
@@ -218,14 +209,14 @@ TmEcode ReceiveWinDivertThreadDeinit(ThreadVars *, void *);
 void ReceiveWinDivertThreadExitStats(ThreadVars *, void *);
 
 /* Verdict functions */
-TmEcode VerdictWinDivert(ThreadVars *, Packet *, void *, PacketQueue *,
-                         PacketQueue *);
+TmEcode VerdictWinDivert(
+        ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
 TmEcode VerdictWinDivertThreadInit(ThreadVars *, const void *, void **);
 TmEcode VerdictWinDivertThreadDeinit(ThreadVars *, void *);
 
 /* Decode functions */
-TmEcode DecodeWinDivert(ThreadVars *, Packet *, void *, PacketQueue *,
-                        PacketQueue *);
+TmEcode DecodeWinDivert(
+        ThreadVars *, Packet *, void *, PacketQueue *, PacketQueue *);
 TmEcode DecodeWinDivertThreadInit(ThreadVars *, const void *, void **);
 TmEcode DecodeWinDivertThreadDeinit(ThreadVars *, void *);
 
@@ -282,15 +273,12 @@ TmEcode ReceiveWinDivertLoop(ThreadVars *tv, void *data, void *slot)
     WinDivertThreadVars *wd_tv = (WinDivertThreadVars *)data;
     wd_tv->slot = ((TmSlot *)slot)->slot_next;
 
-    while (true)
-    {
-        if (suricata_ctl_flags & SURICATA_STOP)
-        {
+    while (true) {
+        if (suricata_ctl_flags & SURICATA_STOP) {
             SCReturnInt(TM_ECODE_OK);
         }
 
-        if (unlikely(WinDivertRecvHelper(tv, wd_tv) != TM_ECODE_OK))
-        {
+        if (unlikely(WinDivertRecvHelper(tv, wd_tv) != TM_ECODE_OK)) {
             SCReturnInt(TM_ECODE_FAILED);
         }
 
@@ -315,10 +303,9 @@ static TmEcode WinDivertRecvHelper(ThreadVars *tv, WinDivertThreadVars *wd_tv)
 
     /* obtain a packet buffer */
     Packet *p = PacketGetFromQueueOrAlloc();
-    if (unlikely(p == NULL))
-    {
+    if (unlikely(p == NULL)) {
         SCLogDebug(
-            "PacketGetFromQueueOrAlloc() - failed to obtain Packet buffer");
+                "PacketGetFromQueueOrAlloc() - failed to obtain Packet buffer");
         SCReturnInt(TM_ECODE_FAILED);
     }
     PKT_SET_SRC(p, PKT_SRC_WIRE);
@@ -329,22 +316,24 @@ static TmEcode WinDivertRecvHelper(ThreadVars *tv, WinDivertThreadVars *wd_tv)
      */
     PacketCallocExtPkt(p, MAX_PAYLOAD_SIZE);
 
-    bool success =
-        WinDivertRecv(wd_tv->filter_handle, p->ext_pkt, MAX_PAYLOAD_SIZE,
-                      &p->windivert_v.addr, &GET_PKT_LEN(p));
-    if (!success)
-    {
+    bool success = WinDivertRecv(wd_tv->filter_handle, p->ext_pkt,
+            MAX_PAYLOAD_SIZE, &p->windivert_v.addr, &p->pktlen);
+    if (!success) {
 #ifdef COUNTERS
-
         SCMutexLock(&wd_qv->counters_mutex);
         wd_qv->errs++;
         SCMutexUnlock(&wd_qv->counters_mutex);
 #endif /* COUNTERS */
 
+        /* ensure packet length is zero to trigger an error in packet decoding
+         */
+        SET_PKT_LEN(p, 0);
+
         SCLogInfo("WinDivertRecv failed: error %" PRIu32 "",
-                  (uint32_t)(GetLastError()));
+                (uint32_t)(GetLastError()));
         SCReturnInt(TM_ECODE_FAILED);
     }
+    SCLogDebug("Packet received, length %" PRId32 "", GET_PKT_LEN(p));
 
     p->windivert_v.thread_num = wd_tv->thread_num;
 
@@ -359,8 +348,7 @@ static TmEcode WinDivertRecvHelper(ThreadVars *tv, WinDivertThreadVars *wd_tv)
      * depending on the running mode, pass the packet to the treatment functions
      * or push it to a packet pool. So processing time can vary.
      */
-    if (TmThreadsSlotProcessPkt(tv, wd_tv->slot, p) != TM_ECODE_OK)
-    {
+    if (TmThreadsSlotProcessPkt(tv, wd_tv->slot, p) != TM_ECODE_OK) {
         TmqhOutputPacketpool(tv, p);
         SCReturnInt(TM_ECODE_FAILED);
     }
@@ -377,24 +365,22 @@ static TmEcode WinDivertRecvHelper(ThreadVars *tv, WinDivertThreadVars *wd_tv)
  * \param initdata pointer to the interface passed from the user
  * \param data out-pointer to the WinDivert-specific thread vars
  */
-TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *initdata,
-                                   void **data)
+TmEcode ReceiveWinDivertThreadInit(
+        ThreadVars *tv, const void *initdata, void **data)
 {
     SCEnter();
     TmEcode ret = TM_ECODE_OK;
 
     WinDivertThreadVars *wd_tv = (WinDivertThreadVars *)initdata;
 
-    if (wd_tv == NULL)
-    {
+    if (wd_tv == NULL) {
         SCLogError(SC_ERR_INVALID_ARGUMENT, "initdata == NULL");
         SCReturnInt(TM_ECODE_FAILED);
     }
 
     WinDivertQueueVars *wd_qv = WinDivertGetQueue(wd_tv->thread_num);
 
-    if (wd_qv == NULL)
-    {
+    if (wd_qv == NULL) {
         SCLogError(SC_ERR_INVALID_ARGUMENT, "queue == NULL");
         SCReturnInt(TM_ECODE_FAILED);
     }
@@ -402,27 +388,24 @@ TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *initdata,
     SCMutexLock(&wd_qv->filter_init_mutex);
     /* does the queue already have an active handle? */
     if (wd_qv->filter_handle != NULL &&
-        wd_qv->filter_handle != INVALID_HANDLE_VALUE)
-    {
+            wd_qv->filter_handle != INVALID_HANDLE_VALUE) {
         goto unlock;
     }
 
     /* we open now so that we can immediately start handling packets, instead of
      * losing however many would occur between registering the queue and
      * starting a receive thread. */
-    wd_qv->filter_handle = WinDivertOpen(wd_qv->filter_str, wd_qv->layer,
-                                         wd_qv->priority, wd_qv->flags);
-    if (wd_qv->filter_handle == INVALID_HANDLE_VALUE)
-    {
+    wd_qv->filter_handle = WinDivertOpen(
+            wd_qv->filter_str, wd_qv->layer, wd_qv->priority, wd_qv->flags);
+    if (wd_qv->filter_handle == INVALID_HANDLE_VALUE) {
         SCLogError(SC_ERR_FATAL, "WinDivertOpen failed, error: %" PRIu32 "",
-                   (uint32_t)(GetLastError()));
+                (uint32_t)(GetLastError()));
         ret = TM_ECODE_FAILED;
         goto unlock;
     }
 
 unlock:
-    if (ret == 0)
-    { /* success */
+    if (ret == 0) { /* success */
         wd_tv->filter_handle = wd_qv->filter_handle;
 
         /* set our return context */
@@ -451,7 +434,7 @@ TmEcode ReceiveWinDivertThreadDeinit(ThreadVars *tv, void *data)
 /**
  * \brief ExitStats prints stats to stdout at exit
  *
- * 
+ *
  * \param tv pointer to generic thread vars
  * \param data pointer to WinDivert-specific thread vars
  */
@@ -461,8 +444,7 @@ void ReceiveWinDivertThreadExitStats(ThreadVars *tv, void *data)
 
     WinDivertThreadVars *wd_tv = (WinDivertThreadVars *)data;
     WinDivertQueueVars *wd_qv = WinDivertGetQueue(wd_tv->thread_num);
-    if (wd_qv == NULL)
-    {
+    if (wd_qv == NULL) {
         SCLogError(SC_ERR_INVALID_ARGUMENT, "queue == NULL");
         SCReturn;
     }
@@ -470,10 +452,10 @@ void ReceiveWinDivertThreadExitStats(ThreadVars *tv, void *data)
     SCMutexLock(&wd_qv->counters_mutex);
 
     SCLogInfo("(%s) Packets %" PRIu32 ", Bytes %" PRIu64 ", Errors %" PRIu32 "",
-              tv->name, wd_qv->pkts, wd_qv->bytes, wd_qv->errs);
+            tv->name, wd_qv->pkts, wd_qv->bytes, wd_qv->errs);
     SCLogInfo("(%s) Verdict: Accepted %" PRIu32 ", Dropped %" PRIu32
               ", Replaced %" PRIu32 "",
-              tv->name, wd_qv->accepted, wd_qv->dropped, wd_qv->replaced);
+            tv->name, wd_qv->accepted, wd_qv->dropped, wd_qv->replaced);
 
     SCMutexUnlock(&wd_qv->counters_mutex);
     SCReturn;
@@ -483,7 +465,7 @@ void ReceiveWinDivertThreadExitStats(ThreadVars *tv, void *data)
  * \brief WinDivert verdict module packet entry function
  */
 TmEcode VerdictWinDivert(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq,
-                         PacketQueue *postpq)
+        PacketQueue *postpq)
 {
     SCEnter();
 
@@ -491,8 +473,7 @@ TmEcode VerdictWinDivert(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq,
 
     /* \todo do we need to specifically handle tunnel packets like NFQ? */
     ret = WinDivertVerdictHelper(tv, p);
-    if (ret != TM_ECODE_OK)
-    {
+    if (ret != TM_ECODE_OK) {
         SCReturnInt(ret);
     }
 
@@ -517,21 +498,18 @@ static TmEcode WinDivertVerdictHelper(ThreadVars *tv, Packet *p)
     p->windivert_v.verdicted = true;
 
     /* can't verdict a "fake" packet */
-    if (PKT_IS_PSEUDOPKT(p))
-    {
+    if (PKT_IS_PSEUDOPKT(p)) {
         SCReturnInt(TM_ECODE_OK);
     }
 
     /* the handle has been closed and we can no longer use it */
     if (wd_tv->filter_handle == INVALID_HANDLE_VALUE ||
-        wd_tv->filter_handle == NULL)
-    {
+            wd_tv->filter_handle == NULL) {
         SCReturnInt(TM_ECODE_OK);
     }
 
     /* DROP simply means we do nothing; the WinDivert driver does the rest. */
-    if (PACKET_TEST_ACTION(p, ACTION_DROP))
-    {
+    if (PACKET_TEST_ACTION(p, ACTION_DROP)) {
 #ifdef COUNTERS
         SCMutexLock(&wd_qv->counters_mutex);
         wd_qv->dropped++;
@@ -541,11 +519,14 @@ static TmEcode WinDivertVerdictHelper(ThreadVars *tv, Packet *p)
         SCReturnInt(TM_ECODE_OK);
     }
 
-    bool success = WinDivertSend(wd_tv->filter_handle, GET_PKT_DATA(p),
-                                 GET_PKT_LEN(p), &p->windivert_v.addr, NULL);
+    /* WinDivert needs checksums corrected */
+    WinDivertHelperCalcChecksums(
+            GET_PKT_DATA(p), GET_PKT_LEN(p), WINDIVERT_HELPER_NO_REPLACE);
 
-    if (unlikely(!success))
-    {
+    bool success = WinDivertSend(wd_tv->filter_handle, GET_PKT_DATA(p),
+            GET_PKT_LEN(p), &p->windivert_v.addr, NULL);
+
+    if (unlikely(!success)) {
         SCReturnInt(TM_ECODE_FAILED);
     }
 
@@ -561,8 +542,8 @@ static TmEcode WinDivertVerdictHelper(ThreadVars *tv, Packet *p)
 /**
  * \brief init the verdict thread, which is piggybacked off the receive thread
  */
-TmEcode VerdictWinDivertThreadInit(ThreadVars *tv, const void *initdata,
-                                   void **data)
+TmEcode VerdictWinDivertThreadInit(
+        ThreadVars *tv, const void *initdata, void **data)
 {
     SCEnter();
 
@@ -596,7 +577,7 @@ TmEcode VerdictWinDivertThreadDeinit(ThreadVars *tv, void *data)
  * there.
  */
 TmEcode DecodeWinDivert(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq,
-                        PacketQueue *postpq)
+        PacketQueue *postpq)
 {
     SCEnter();
 
@@ -612,20 +593,15 @@ TmEcode DecodeWinDivert(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq,
 
     DecodeUpdatePacketCounters(tv, d_tv, p);
 
-    if (IPV4_GET_RAW_VER(ip4h) == 4)
-    {
+    if (IPV4_GET_RAW_VER(ip4h) == 4) {
         SCLogDebug("IPv4 packet");
         DecodeIPV4(tv, d_tv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
-    }
-    else if (IPV6_GET_RAW_VER(ip6h) == 6)
-    {
+    } else if (IPV6_GET_RAW_VER(ip6h) == 6) {
         SCLogDebug("IPv6 packet");
         DecodeIPV6(tv, d_tv, p, GET_PKT_DATA(p), GET_PKT_LEN(p), pq);
-    }
-    else
-    {
+    } else {
         SCLogDebug("packet unsupported by WinDivert, first byte: %02x",
-                   *GET_PKT_DATA(p));
+                *GET_PKT_DATA(p));
     }
 
     PacketDecodeFinalize(tv, d_tv, p);
@@ -633,14 +609,13 @@ TmEcode DecodeWinDivert(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq,
     SCReturnInt(TM_ECODE_OK);
 }
 
-TmEcode DecodeWinDivertThreadInit(ThreadVars *tv, const void *initdata,
-                                  void **data)
+TmEcode DecodeWinDivertThreadInit(
+        ThreadVars *tv, const void *initdata, void **data)
 {
     SCEnter();
 
     DecodeThreadVars *d_tv = DecodeThreadVarsAlloc(tv);
-    if (d_tv == NULL)
-    {
+    if (d_tv == NULL) {
         SCReturnInt(TM_ECODE_FAILED);
     }
 
@@ -655,8 +630,7 @@ TmEcode DecodeWinDivertThreadDeinit(ThreadVars *tv, void *data)
 {
     SCEnter();
 
-    if (data != NULL)
-    {
+    if (data != NULL) {
         DecodeThreadVarsFree(tv, data);
     }
 
@@ -672,10 +646,9 @@ static TmEcode WinDivertCloseHelper(WinDivertThreadVars *wd_tv)
     TmEcode ret = TM_ECODE_OK;
 
     WinDivertQueueVars *wd_qv = WinDivertGetQueue(wd_tv->thread_num);
-    if (wd_qv == NULL)
-    {
+    if (wd_qv == NULL) {
         SCLogDebug("No queue could be found for thread num %" PRId32 "",
-                   wd_tv->thread_num);
+                wd_tv->thread_num);
         SCReturnInt(TM_ECODE_FAILED);
     }
 
@@ -683,15 +656,13 @@ static TmEcode WinDivertCloseHelper(WinDivertThreadVars *wd_tv)
 
     /* check if there's nothing to close */
     if (wd_qv->filter_handle == INVALID_HANDLE_VALUE ||
-        wd_qv->filter_handle == NULL)
-    {
+            wd_qv->filter_handle == NULL) {
         goto unlock;
     }
 
-    if (!WinDivertClose(wd_qv->filter_handle))
-    {
+    if (!WinDivertClose(wd_qv->filter_handle)) {
         SCLogError(SC_ERR_FATAL, "WinDivertClose failed: error %" PRIu32 "",
-                   (uint32_t)(GetLastError()));
+                (uint32_t)(GetLastError()));
         ret = TM_ECODE_FAILED;
         goto unlock;
     }
