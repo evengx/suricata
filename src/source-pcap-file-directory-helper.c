@@ -355,7 +355,7 @@ TmEcode PcapDirectoryPopulateBuffer(PcapFileDirectoryVars *pv,
             memset(&temp_time, 0, sizeof(struct timespec));
 
             if (PcapDirectoryGetModifiedTime(pathbuff, &temp_time) == 0) {
-                SCLogDebug("File %s time (%lu > %lu < %lu)", pathbuff,
+                SCLogDebug("File %s time (%" TIME_FORMAT " > %" TIME_FORMAT " < %" TIME_FORMAT ")", pathbuff,
                            newer_than->tv_sec, temp_time.tv_sec, older_than->tv_sec);
 
                 // Skip files outside of our time range
@@ -474,7 +474,7 @@ TmEcode PcapDirectoryDispatchForTimeRange(PcapFileDirectoryVars *pv,
                                                      &temp_time) != 0) {
                         CopyTime(&temp_time, newer_than);
                     }
-                    SCLogDebug("Processed file %s, processed up to %ld",
+                    SCLogDebug("Processed file %s, processed up to %" TIME_FORMAT "",
                                current_file->filename, temp_time.tv_sec);
                     CopyTime(&temp_time, &pv->shared->last_processed);
 

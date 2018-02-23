@@ -27,6 +27,12 @@
 #ifndef __SOURCE_PCAP_FILE_HELPER_H__
 #define __SOURCE_PCAP_FILE_HELPER_H__
 
+#if defined OS_WIN32 && !defined _USE_32BIT_TIME_T
+    #define TIME_FORMAT "I64u"
+#else
+    #define TIME_FORMAT "lu"
+#endif
+
 typedef struct PcapFileGlobalVars_ {
     uint64_t cnt; /** packet counter */
     ChecksumValidationMode conf_checksum_mode;
