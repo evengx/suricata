@@ -36,6 +36,9 @@ be achieved using the following command:
 
   suricata -c suricata.yaml --windivert-forward [filter string]
 
+The filter is automatically stopped and normal traffic resumes when Suricata is
+stopped.
+
 A quick start is to examine all traffic, in which case you can use the following
 command:
 
@@ -43,5 +46,19 @@ command:
   
   suricata -c suricata.yaml --windivert[-forward] true
 
-The filter is automatically stopped and normal traffic resumes when Suricata is
-stopped.
+A few additional examples:
+
+Only TCP traffic:
+::
+
+  suricata -c suricata.yaml --windivert tcp
+
+Only TCP traffic on port 80:
+::
+
+  suricata -c suricata.yaml --windivert "tcp.DstPort == 80"
+
+TCP and ICMP traffic:
+::
+
+  suricata -c suricata.yaml --windivert "tcp or icmp"

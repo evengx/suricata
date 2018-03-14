@@ -2,7 +2,7 @@ noinst_HEADERS = action-globals.h \
     app-layer-nbss.h app-layer-dcerpc-common.h \
     debug.h \
 	flow-private.h queue.h source-nfq-prototypes.h \
-    source-windivert-prototypes.h \
+	source-windivert-prototypes.h \
 	suricata-common.h threadvars.h util-binsearch.h \
     util-validate.h
 bin_PROGRAMS = suricata
