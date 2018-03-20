@@ -197,10 +197,10 @@ unlock:
     if (ret == 0) {
         // stringify queue index to use as thread name descriptor
         char wd_num_str[6];
-        wd_num_str[sizeof(wd_num_string) - 1] = 0;
-        snprintf(wd_num_str, sizeof(wd_num_str), "%" PRId16 "", g_wd_num)
+        wd_num_str[sizeof(wd_num_str) - 1] = 0;
+        snprintf(wd_num_str, sizeof(wd_num_str), "%" PRId16 "", g_wd_num);
 
-                LiveRegisterDevice(wd_num_str);
+        LiveRegisterDevice(wd_num_str);
 
         SCLogDebug("Queue %" PRId16 " registered", wd_qv->queue_num);
     }
@@ -558,11 +558,6 @@ static TmEcode WinDivertVerdictHelper(ThreadVars *tv, Packet *p)
 
     SCReturnInt(TM_ECODE_OK);
 }
-
-/**
- * \brief internal helper function to handle verdicts on nested tunnel packets
- */
-static TmEcode WinDivertTunnelVerdictHelper(ThreadVars *tv, Packet *p) {}
 
 /**
  * \brief init the verdict thread, which is piggybacked off the receive thread
