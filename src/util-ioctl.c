@@ -44,12 +44,11 @@
 #include <net/if.h>
 #endif
 
-#ifdef OS_WIN32
-#include <winsock2.h>
-#include <iphlpapi.h>
-#endif
-
 #include "util-ioctl.h"
+
+#ifdef OS_WIN32
+#include "win32-iphlp.h"
+#endif
 
 /**
  * \brief output a majorant of hardware header length
@@ -115,68 +114,7 @@ int GetIfaceMTU(const char *pcap_dev)
             pcap_dev);
     return ifr.ifr_mtu;
 #elif defined OS_WIN32
-    int mtu = 0;
-    
-    /* get a wchar_t string for Win32 UTF-16 */
-    size_t n_chars = strlen(pcap_dev);
-    size_t wc_bytes = sizeof(wchar_t) * (n_chars+1); /* +1 for null terminator */
-    wchar_t *wchar_pcap_dev = malloc(wc_bytes);
-    memset(wchar_pcap_dev, 0, wc_bytes);
-    n_chars = mbstowcs(wchar_pcap_dev, pcap_dev, n_chars);
-    if (n_chars == (size_t)-1) {
-        goto fail;
-    }
-
-    /* adapter query functions require an index, not a name */
-    ULONG if_index;
-    DWORD ret;
-    ret = GetAdapterIndex(wchar_pcap_dev, &if_index);
-    if (ret != NO_ERROR) {
-        goto fail;
-    }
-
-    /* we have to get a list of all adapters in order to find the data for one */
-    IP_ADAPTER_ADDRESSES *if_info_list;
-    ULONG size = 0;
-    ret = GetAdaptersAddresses(AF_UNSPEC, 0, NULL, NULL, &size);
-    if (ret != ERROR_BUFFER_OVERFLOW) {
-        goto fail;
-    }
-    if_info_list = malloc((size_t)size);
-    if (if_info_list == NULL) {
-        goto fail;
-    }
-    ret = GetAdaptersAddresses(AF_UNSPEC, 0, NULL, if_info_list, &size);
-    if (ret != NO_ERROR) {
-        goto fail;
-    }
-
-    /* now search for the right adapter in the list */
-    IP_ADAPTER_ADDRESSES *if_info = NULL;
-    for (if_info = if_info_list; if_info != NULL; if_info = if_info->Next) {
-        if (if_info->IfIndex == if_index) {
-            break;
-        }
-    }
-    if (if_info == NULL) {
-        goto fail;
-    }
-
-    mtu = if_info->Mtu;
-
-    free(if_info_list);
-    free(wchar_pcap_dev);
-    
-    SCLogInfo("Found an MTU of %d for '%s'", mtu, pcap_dev);
-    return mtu;
-
-fail:
-    free(if_info_list);
-    free(wchar_pcap_dev);
-    SCLogWarning(SC_ERR_SYSCALL,
-            "Failure when trying to get MTU via syscall for '%s': %s (%" PRId32
-            ")", pcap_dev, strerror(ret), (uint32_t)ret);
-    return -1;
+    return GetIfaceMTUWin32(pcap_dev);
 #else
     /* ioctl is not defined, let's pretend returning 0 is ok */
     return 0;
