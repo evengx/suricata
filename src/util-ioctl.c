@@ -48,6 +48,7 @@
 
 #ifdef OS_WIN32
 #include "win32-iphlp.h"
+#include "win32-wmi.h"
 #endif
 
 /**
@@ -684,6 +685,8 @@ int GetIfaceOffloading(const char *dev, int csum, int other)
     return GetIfaceOffloadingLinux(dev, csum, other);
 #elif defined SIOCGIFCAP
     return GetIfaceOffloadingBSD(dev);
+#elif defined OS_WIN32
+    return GetIfaceOffloadingWin32(dev);
 #else
     return 0;
 #endif
