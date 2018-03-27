@@ -39,35 +39,9 @@
 #include "util-debug.h"
 #include "util-error.h"
 
+#include "win32-internal.h"
 #include "win32-iphlp.h"
 #include "win32-misc.h"
-
-/**
- * \brief: get the adapter address list, which includes IP status/details
- */
-static DWORD _GetAdaptersAddresses(IP_ADAPTER_ADDRESSES **pif_info_list)
-{
-    DWORD err = NO_ERROR;
-    IP_ADAPTER_ADDRESSES *if_info_list;
-
-    ULONG size = 0;
-    err = GetAdaptersAddresses(AF_UNSPEC, 0, NULL, NULL, &size);
-    if (err != ERROR_BUFFER_OVERFLOW) {
-        return err;
-    }
-    if_info_list = malloc((size_t)size);
-    if (if_info_list == NULL) {
-        return ERROR_NOT_ENOUGH_MEMORY;
-    }
-    err = GetAdaptersAddresses(AF_UNSPEC, 0, NULL, if_info_list, &size);
-    if (err != NO_ERROR) {
-        free(if_info_list);
-        return err;
-    }
-
-    *pif_info_list = if_info_list;
-    return NO_ERROR;
-}
 
 /**
  * \brief: get the maximum transmissible unit for the specified pcap device name
@@ -97,7 +71,6 @@ int GetIfaceMTUWin32(const char *pcap_dev)
     mtu = if_info->Mtu;
 
     free(if_info_list);
-    free(wchar_pcap_dev);
 
     SCLogInfo("Found an MTU of %d for '%s'", mtu, pcap_dev);
     return mtu;
@@ -130,7 +103,7 @@ int GetGlobalMTUWin32()
     IP_ADAPTER_ADDRESSES *if_info_list = NULL;
 
     /* get a list of all adapters' data */
-    err = _GetAdaptersAddresses(&if_info_list);
+    err = GetAdaptersAddressesWin32(&if_info_list);
     if (err != NO_ERROR) {
         goto fail;
     }

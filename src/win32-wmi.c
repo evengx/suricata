@@ -37,25 +37,29 @@
 #define NTDDI_VERSION NTDDI_VISTA
 
 #include <inttypes.h>
+#include <stdbool.h>
 
 // clang-format off
 #include <winsock2.h>
 #include <windows.h>
 #include <wbemidl.h>
+#include <strsafe.h>
+#include <ntddndis.h>
 // clang-format on
 
 #include "util-debug.h"
 #include "util-device.h"
 
+#include "win32-internal.h"
 #include "win32-misc.h"
 #include "win32-wmi.h"
 
 #define MAKE_VARIANT(v, type, value)                                           \
+    VARIANT v;                                                                 \
     do {                                                                       \
-        VARIANT(v);                                                            \
-        VariantInit(&(v));                                                     \
+        VariantInit(&v);                                                       \
         V_VT(&v) = VT_##type;                                                  \
-        V_##type##(&v) = value;                                                \
+        V_##type(&v) = (value);                                                \
     } while (0);
 
 #define RELEASE_OBJECT(objptr)                                                 \
@@ -67,9 +71,22 @@
 
 typedef enum Win32TcpOffloadFlags_ {
     WIN32_TCP_OFFLOAD_FLAG_NONE = 0,
-    WIN32_TCP_OFFLOAD_FLAG_LSOV1 = 1,
-    WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4 = 1 << 1,
-    WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6 = 1 << 2
+    WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4RX = 1,
+    WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4TX = 1 << 1,
+    WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6RX = 1 << 2,
+    WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6TX = 1 << 3,
+    WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4 = 1 << 4,
+    WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4 = 1 << 5,
+    WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6 = 1 << 6,
+
+    /* aggregates */
+    WIN32_TCP_OFFLOAD_FLAG_CSUM = WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4RX |
+                                  WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4TX |
+                                  WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6RX |
+                                  WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6TX,
+    WIN32_TCP_OFFLOAD_LSO = WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4 |
+                            WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4 |
+                            WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6,
 } Win32TcpOffloadFlags;
 
 typedef struct ComInstance_ {
@@ -141,7 +158,7 @@ fail:
 typedef struct WmiMethod_ {
     ComInstance com_instance;
 
-    BSTR *object_name, *method_name;
+    BSTR object_name, method_name;
 
     IWbemClassObject *object;
     IWbemClassObject *in_params, *out_params;
@@ -152,15 +169,10 @@ typedef struct WmiMethod_ {
  */
 static void WmiMethodRelease(WmiMethod *method)
 {
-    if (method->object != NULL) {
-        method->object->lpVtbl->Release(method->object);
-    }
-    if (method->in_params != NULL) {
-        method->in_params->lpVtbl->Release(method->in_params)
-    }
-    if (method->out_params != NULL) {
-        method->out_params->lpVtbl->Release(method->out_params)
-    }
+    RELEASE_OBJECT(method->object);
+    RELEASE_OBJECT(method->in_params);
+    RELEASE_OBJECT(method->out_params);
+
     SysFreeString(method->method_name);
     SysFreeString(method->object_name);
     ComInstanceRelease(&method->com_instance);
@@ -199,8 +211,9 @@ static HRESULT WmiMethodInit(WmiMethod *method, LPCWSTR object_name,
     }
 
     /* find our object to retrieve parameters */
-    hr = method->com_instance.services->GetObject(
-            object_name, WBEM_FLAG_RETURN_WBEM_COMPLETE, NULL, &object, NULL);
+    hr = method->com_instance.services->lpVtbl->GetObject(
+            method->com_instance.services, method->object_name,
+            WBEM_FLAG_RETURN_WBEM_COMPLETE, NULL, &method->object, NULL);
     if (hr != WBEM_S_NO_ERROR) {
         SCLogWarning(SC_ERR_SYSCALL, "WMI GetObject failed: 0x%" PRIx32,
                      (uint32_t)hr);
@@ -208,7 +221,8 @@ static HRESULT WmiMethodInit(WmiMethod *method, LPCWSTR object_name,
     }
 
     /* find the method on the retrieved object */
-    hr = method->object->lpVtbl->GetMethod(method_name, 0, &method->in_params,
+    hr = method->object->lpVtbl->GetMethod(method->object, method_name, 0,
+                                           &method->in_params,
                                            &method->out_params);
     if (hr != WBEM_S_NO_ERROR) {
         SCLogWarning(SC_ERR_SYSCALL, "WMI GetMethod failed: 0x%" PRIx32,
@@ -219,7 +233,7 @@ static HRESULT WmiMethodInit(WmiMethod *method, LPCWSTR object_name,
     return S_OK;
 
 fail:
-    WmiMethodRelease(&method->com_instance);
+    WmiMethodRelease(method);
 
     return hr;
 }
@@ -253,14 +267,16 @@ static HRESULT WmiMethodCallInit(WmiMethodCall *call, WmiMethod *method)
     call->executed = false;
 
     /* make an instance of the in/out params */
-    hr = method->in_params->lpVtbl->SpawnInstance(0, &call->in_params);
+    hr = method->in_params->lpVtbl->SpawnInstance(method->in_params, 0,
+                                                  &call->in_params);
     if (hr != S_OK) {
         SCLogWarning(SC_ERR_SYSCALL,
                      "WMI SpawnInstance failed on in_params: 0x%" PRIx32,
                      (uint32_t)hr);
         goto fail;
     }
-    hr = method->out_params->lpVtbl->SpawnInstance(0, &call->out_params);
+    hr = method->out_params->lpVtbl->SpawnInstance(method->out_params, 0,
+                                                   &call->out_params);
     if (hr != S_OK) {
         SCLogWarning(SC_ERR_SYSCALL,
                      "WMI SpawnInstance failed on out_params: 0x%" PRIx32,
@@ -283,11 +299,15 @@ static HRESULT WmiMethodCallExec(WmiMethodCall *call)
 {
     HRESULT hr = S_OK;
 
+    if (call->executed) {
+        return E_FAIL;
+    }
     call->executed = true;
 
     hr = call->method->com_instance.services->lpVtbl->ExecMethod(
-            call->method->object_name, call->method->method_name, 0, NULL,
-            call->in_params, &call->out_params, NULL);
+            call->method->com_instance.services, call->method->object_name,
+            call->method->method_name, 0, NULL, call->in_params,
+            &call->out_params, NULL);
     if (hr != WBEM_S_NO_ERROR) {
         SCLogWarning(SC_ERR_SYSCALL, "WMI ExecMethod failed: 0x%" PRIx32,
                      (uint32_t)hr);
@@ -298,7 +318,7 @@ static HRESULT WmiMethodCallExec(WmiMethodCall *call)
 }
 
 /**
- * Obtains a
+ * Obtains an IWbemClassObject named property of a parent IWbemClassObject
  */
 static HRESULT WbemGetSubObject(IWbemClassObject *object, LPCWSTR property_name,
                                 IWbemClassObject **sub_object)
@@ -307,13 +327,13 @@ static HRESULT WbemGetSubObject(IWbemClassObject *object, LPCWSTR property_name,
 
     MAKE_VARIANT(out_var, UNKNOWN, NULL);
 
-    hr = object->lpVtbl->Get(property_name, 0, &out_var, NULL);
+    hr = object->lpVtbl->Get(object, property_name, 0, &out_var, NULL, NULL);
     if (hr != WBEM_S_NO_ERROR) {
         goto release;
     }
-    VariantClear(&out_var);
-    hr = ((IUnknown)V_UNKNOWN(&out_var))
-                 ->lpVtbl->QueryInterface(IID_IWbemClassObject, sub_object);
+    IUnknown *unknown = (IUnknown *)V_UNKNOWN(&out_var);
+    hr = unknown->lpVtbl->QueryInterface(unknown, &IID_IWbemClassObject,
+                                         (void **)sub_object);
     if (hr != S_OK) {
         SCLogWarning(SC_ERR_SYSCALL,
                      "WMI QueryInterface (IWbemClassObject) failed: 0x%" PRIx32,
@@ -327,14 +347,56 @@ release:
 }
 
 /**
+ * Obtains an Encapsulation value from an MSNdis_WmiOffload property
+ */
+static HRESULT GetEncapsulation(IWbemClassObject *object, LPCWSTR category,
+                                LPCWSTR subcategory, ULONG *encapsulation)
+{
+    HRESULT hr = WBEM_S_NO_ERROR;
+
+    IWbemClassObject *category_object = NULL;
+    IWbemClassObject *subcategory_object = NULL;
+    MAKE_VARIANT(out_var, UI4, 0);
+
+    /* get category object */
+    hr = WbemGetSubObject(object, category, &category_object);
+    if (hr != WBEM_S_NO_ERROR) {
+        goto release;
+    }
+
+    /* get sub-category object */
+    hr = WbemGetSubObject(category_object, subcategory, &subcategory_object);
+    if (hr != WBEM_S_NO_ERROR) {
+        goto release;
+    }
+    hr = subcategory_object->lpVtbl->Get(subcategory_object, L"Encapsulation",
+                                         0, &out_var, NULL, NULL);
+    if (hr != WBEM_S_NO_ERROR) {
+        goto release;
+    }
+    *encapsulation = V_UI4(&out_var);
+
+release:
+    VariantClear(&out_var);
+    RELEASE_OBJECT(subcategory_object);
+    RELEASE_OBJECT(category_object);
+    return hr;
+}
+
+/**
  * \brief polls the NDIS TCP offloading status, namely LSOv1/v2
  */
-static HRESULT GetNdisOffload(NET_IFINDEX if_index, uint64_t *offload_flags)
+static HRESULT GetNdisOffload(LPCWSTR friendly_name, uint64_t *offload_flags)
 {
     HRESULT hr = S_OK;
 
-    /* namespace, class, function strings */
-    LPCWSTR object_name = L"MSNdis_TcpOffloadCurrentConfig";
+    /* object instance path */
+    LPCWSTR object_name_fmt = L"MSNdis_TcpOffloadCurrentConfig=\"%s\"";
+    size_t n_chars = wcslen(object_name_fmt) + wcslen(friendly_name);
+    LPWSTR object_name = malloc((n_chars + 1) * sizeof(wchar_t));
+    object_name[n_chars] = 0; /* defensively null-terminate */
+    hr = StringCchPrintfW(object_name, n_chars, object_name_fmt, friendly_name);
+    /* method name */
     LPCWSTR method_name = L"WmiQueryCurrentOffloadConfig";
 
     /* connect to COM/WMI and obtain method */
@@ -353,23 +415,24 @@ static HRESULT GetNdisOffload(NET_IFINDEX if_index, uint64_t *offload_flags)
 
     /* build parameters */
     /* MSNdis_ObjectHeader */
-    BSTR ndis_object_header_name = SysAllocString("MSNdis_ObjectHeader");
+    BSTR ndis_object_header_name = SysAllocString(L"MSNdis_ObjectHeader");
     if (ndis_object_header_name == NULL) {
         SCLogWarning(SC_ERR_SYSCALL, "Failed to allocate BSTR");
         goto release;
     }
     IWbemClassObject *ndis_object_header;
-    hr = method->com_instance.services->lpVtbl->GetObject(
-            ndis_object_header_name, WBEM_FLAG_RETURN_WBEM_COMPLETE, NULL,
-            &ndis_object_header, NULL);
+    hr = method.com_instance.services->lpVtbl->GetObject(
+            method.com_instance.services, ndis_object_header_name,
+            WBEM_FLAG_RETURN_WBEM_COMPLETE, NULL, &ndis_object_header, NULL);
     if (hr != WBEM_S_NO_ERROR) {
         SCLogWarning(SC_ERR_SYSCALL, "WMI GetObject failed: 0x%" PRIx32,
                      (uint32_t)hr);
         goto release;
     }
-    IUnknown *ndis_object_header_unknown;
+    IUnknown *ndis_object_header_unknown = NULL;
     hr = ndis_object_header->lpVtbl->QueryInterface(
-            IID_IUnknown, &ndis_object_header_unknown);
+            ndis_object_header, &IID_IUnknown,
+            (void **)&ndis_object_header_unknown);
     if (hr != S_OK) {
         SCLogWarning(SC_ERR_SYSCALL,
                      "WMI QueryInterface (IUnknown) failed: 0x%" PRIx32,
@@ -379,45 +442,52 @@ static HRESULT GetNdisOffload(NET_IFINDEX if_index, uint64_t *offload_flags)
 
     /* Set parameters of MSNdis_ObjectHeader */
     MAKE_VARIANT(header_type, UI1, NDIS_WMI_OBJECT_TYPE_METHOD);
-    hr = ndis_object_header->lpVtbl->Put(L"Type", 0, header_type);
+    hr = ndis_object_header->lpVtbl->Put(ndis_object_header, L"Type", 0,
+                                         &header_type, VT_UI1);
     if (hr != WBEM_S_NO_ERROR) {
         goto release;
     }
-    MAKE_VARIANT(header_revision, UI1, NDIS_GUID_HEADER_REVISION_1);
-    hr = ndis_object_header->lpVtbl->Put(L"Revision", 0, header_revision);
+    MAKE_VARIANT(header_revision, UI1, NDIS_WMI_METHOD_HEADER_REVISION_1);
+    hr = ndis_object_header->lpVtbl->Put(ndis_object_header, L"Revision", 0,
+                                         &header_revision, VT_UI1);
     if (hr != WBEM_S_NO_ERROR) {
         goto release;
     }
-    MAKE_VARIANT(header_size, UI2, sizeof(NDIS_WMI_OBJECT_TYPE_METHOD));
-    hr = ndis_object_header->lpVtbl->Put(L"Size", 0, header_size, VT_UI2);
+    MAKE_VARIANT(header_size, UI2, sizeof(NDIS_WMI_METHOD_HEADER));
+    hr = ndis_object_header->lpVtbl->Put(ndis_object_header, L"Size", 0,
+                                         &header_size, VT_UI2);
     if (hr != WBEM_S_NO_ERROR) {
         goto release;
     }
 
     /* Set values in MSNdis_WmiMethodHeader (in_params) */
-    MAKE_VARIANT(ndis_object_header_var, UNKNOWN, ndis_header_object_unknown);
-    hr = call->in_params->lpVtbl->Put(L"Header", 0, ndis_object_header_var,
-                                      VT_UNKNOWN);
+    MAKE_VARIANT(ndis_object_header_var, UNKNOWN, ndis_object_header_unknown);
+    hr = call.in_params->lpVtbl->Put(call.in_params, L"Header", 0,
+                                     &ndis_object_header_var, VT_UNKNOWN);
     if (hr != WBEM_S_NO_ERROR) {
         goto release;
     }
     MAKE_VARIANT(net_luid, UI8, 0);
-    hr = call->in_params->lpVtbl->Put(L"NetLuid", 0, net_luid, VT_UI8);
+    hr = call.in_params->lpVtbl->Put(call.in_params, L"NetLuid", 0, &net_luid,
+                                     VT_UI8);
     if (hr != WBEM_S_NO_ERROR) {
         goto release;
     }
     MAKE_VARIANT(port_number, UI4, 0);
-    hr = call->in_params->lpVtbl->Put(L"PortNumber", 0, port_number, VT_UI4);
+    hr = call.in_params->lpVtbl->Put(call.in_params, L"PortNumber", 0,
+                                     &port_number, VT_UI4);
     if (hr != WBEM_S_NO_ERROR) {
         goto release;
     }
     MAKE_VARIANT(request_id, UI8, 0);
-    hr = call->in_params->lpVtbl->Put(L"RequestId", 0, request_id, VT_UI8);
+    hr = call.in_params->lpVtbl->Put(call.in_params, L"RequestId", 0,
+                                     &request_id, VT_UI8);
     if (hr != WBEM_S_NO_ERROR) {
         goto release;
     }
     MAKE_VARIANT(timeout, UI4, 5);
-    hr = call->in_params->lpVtbl->Put(L"Timeout", 0, timeout, VT_UI4);
+    hr = call.in_params->lpVtbl->Put(call.in_params, L"Timeout", 0, &timeout,
+                                     VT_UI4);
     if (hr != WBEM_S_NO_ERROR) {
         goto release;
     }
@@ -429,57 +499,68 @@ static HRESULT GetNdisOffload(NET_IFINDEX if_index, uint64_t *offload_flags)
     }
 
     /* inspect the result */
-    VARIANT out_var;
-    VariantInit(&out_var);
+    ULONG encapsulation;
 
-    /* LsoV1 */
-    IWbemClassObject *lso_v1_object;
-    WbemGetSubObject(out_params, L"LsoV1", &lso_v1_object);
-    IWbemClassObject *lso_v1_ipv4_object;
-    WbemGetSubObject(lso_v1_object, L"WmiIPv4", &lso_v1_ipv4_object);
-    hr = lso_v1_ipv4_object->lpVtbl->Get(L"Encapsulation", 0, &out_var, NULL);
+    /* Checksum */
+    hr = GetEncapsulation(call.out_params, L"Checksum", L"IPv4Receive",
+                          &encapsulation);
     if (hr != WBEM_S_NO_ERROR) {
         goto release;
     }
-    if (VT_UI4(&out_var) != 0) { /* encapsulation flags indicate offload */
-        *offload_flags |= WIN32_TCP_OFFLOAD_FLAG_LSOV1;
+    if (encapsulation != 0) {
+        *offload_flags |= WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4RX;
+    }
+    hr = GetEncapsulation(call.out_params, L"Checksum", L"IPv4Transmit",
+                          &encapsulation);
+    if (hr != WBEM_S_NO_ERROR) {
+        goto release;
+    }
+    if (encapsulation != 0) {
+        *offload_flags |= WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4TX;
+    }
+    hr = GetEncapsulation(call.out_params, L"Checksum", L"IPv6Receive",
+                          &encapsulation);
+    if (hr != WBEM_S_NO_ERROR) {
+        goto release;
+    }
+    if (encapsulation != 0) {
+        *offload_flags |= WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6RX;
+    }
+    hr = GetEncapsulation(call.out_params, L"Checksum", L"IPv6Transmit",
+                          &encapsulation);
+    if (hr != WBEM_S_NO_ERROR) {
+        goto release;
+    }
+    if (encapsulation != 0) {
+        *offload_flags |= WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6TX;
+    }
+
+    /* LsoV1 */
+    hr = GetEncapsulation(call.out_params, L"LsoV1", L"WmiIPv4", &encapsulation);
+    if (hr != WBEM_S_NO_ERROR) {
+        goto release;
+    }
+    if (encapsulation != 0) {
+        *offload_flags |= WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4;
     }
 
     /* LsoV2 */
-    IWbemClassObject *lso_v2_object;
-    WbemGetSubObject(out_params, L"LsoV2", &lso_v2_object);
-    /* IPv4 */
-    IWbemClassObject *lso_v2_ip4_object;
-    WbemGetSubObject(lso_v2_object, L"WmiIPv4", &lso_v2_ip4_object);
-    VariantClear(&out_var);
-    hr = lso_v2_ip4_object->lpVtbl->Get(L"Encapsulation", 0, &out_var, NULL);
+    hr = GetEncapsulation(call.out_params, L"LsoV2", L"WmiIPv4", &encapsulation);
     if (hr != WBEM_S_NO_ERROR) {
         goto release;
     }
-    if (VT_UI4(&out_var) != 0) { /* encapsulation flags indicate offload */
+    if (encapsulation != 0) {
         *offload_flags |= WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4;
     }
-    /* IPv6 */
-    IWbemClassObject *lso_v2_ip6_object;
-    WbemGetSubObject(lso_v2_object, L"WmiIPv6", &lso_v2_ip6_object);
-    VariantClear(&out_var);
-    hr = lso_v2_ip6_object->lpVtbl->Get(L"Encapsulation", 0, &out_var, NULL);
+    hr = GetEncapsulation(call.out_params, L"LsoV2", L"WmiIPv6", &encapsulation);
     if (hr != WBEM_S_NO_ERROR) {
         goto release;
     }
-
-    if (VT_UI4(&out_var) != 0) { /* encapsulation flags indicate offload */
+    if (encapsulation != 0) {
         *offload_flags |= WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6;
     }
 
 release:
-    RELEASE_OBJECT(lso_v2_ip6_object);
-    RELEASE_OBJECT(lso_v2_ip4_object);
-    RELEASE_OBJECT(lso_v2_object);
-    RELEASE_OBJECT(lso_v1_ipv4_object);
-    RELEASE_OBJECT(lso_v1_object);
-
-    VariantClear(&out_var);
     VariantClear(&timeout);
     VariantClear(&request_id);
     VariantClear(&port_number);
@@ -489,9 +570,7 @@ release:
     VariantClear(&header_type);
     VariantClear(&ndis_object_header_var);
 
-    if (ndis_object_header != NULL) {
-        ndis_object_header->lpVtbl->Release(ndis_object_header);
-    }
+    RELEASE_OBJECT(ndis_object_header);
     SysFreeString(ndis_object_header_name);
 
     WmiMethodCallRelease(&call);
@@ -500,22 +579,69 @@ release:
     return hr;
 }
 
-int GetIfaceOffloadingWin32(const char *pcap_dev)
+int GetIfaceOffloadingWin32(const char *pcap_dev, int csum, int other)
 {
     int ret = 0;
     uint64_t offload_flags;
 
     NET_IFINDEX if_index = if_nametoindex(pcap_dev);
+    /* WMI uses the friendly name as an identifier... */
+    IP_ADAPTER_ADDRESSES if_info = {};
+    DWORD err = GetAdapterAddressesWin32(pcap_dev, &if_info);
+    if (err != NO_ERROR) {
+        SCLogWarning(SC_ERR_SYSCALL,
+                     "Failure when trying to get feature via syscall for '%s': "
+                     "%s (0x%" PRIx32 ")",
+                     pcap_dev, strerror((int)err), (uint32_t)err);
+        return -1;
+    }
+    LPWSTR *if_friendly_name = if_info.FriendlyName;
 
-    HRESULT hr = GetNdisOffload(if_index, &offload_flags);
+    HRESULT hr = GetNdisOffload(if_friendly_name, &offload_flags);
     if (hr != S_OK) {
-        ret = -1;
+        SCLogWarning(SC_ERR_SYSCALL,
+                     "Failure when trying to get feature via syscall for '%s': "
+                     "%s (0x%" PRIx32 ")",
+                     pcap_dev, strerror((int)hr), (uint32_t)hr);
+        return -1;
     } else if (offload_flags != 0) {
-        ret = 1;
-        SCLogWarning(SC_ERR_NIC_OFFLOADING, )
+        if (csum == 1) {
+            if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM) != 0) {
+                ret = 1;
+            }
+        }
+        if (other == 1) {
+            if ((offload_flags & WIN32_TCP_OFFLOAD_LSO) != 0) {
+                ret = 1;
+            }
+        }
     }
 
-release:
+    if (ret == 0) {
+        SCLogPerf("NIC offloading on %s: Checksum IPv4 Rx: %d Tx: %d IPv6 "
+                  "Rx: %d Tx: %d LSOv1 IPv4: %d LSOv2 IPv4: %d IPv6: %d",
+                  pcap_dev,
+                  (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4RX) != 0,
+                  (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4TX) != 0,
+                  (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6RX) != 0,
+                  (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6TX) != 0,
+                  (offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4) != 0,
+                  (offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4) != 0,
+                  (offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6) != 0);
+    } else {
+        SCLogWarning(SC_ERR_NIC_OFFLOADING,
+                     "NIC offloading on %s: Checksum IPv4 Rx: %d Tx: %d IPv6 "
+                     "Rx: %d Tx: %d LSOv1 IPv4: %d LSOv2 IPv4: %d IPv6: %d",
+                     pcap_dev,
+                     (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4RX) != 0,
+                     (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4TX) != 0,
+                     (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6RX) != 0,
+                     (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6TX) != 0,
+                     (offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4) != 0,
+                     (offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4) != 0,
+                     (offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6) != 0);
+    }
+
     return ret;
 }
 

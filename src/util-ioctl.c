@@ -686,7 +686,7 @@ int GetIfaceOffloading(const char *dev, int csum, int other)
 #elif defined SIOCGIFCAP
     return GetIfaceOffloadingBSD(dev);
 #elif defined OS_WIN32
-    return GetIfaceOffloadingWin32(dev);
+    return GetIfaceOffloadingWin32(dev, csum, other);
 #else
     return 0;
 #endif

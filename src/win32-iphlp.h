@@ -19,7 +19,7 @@
  * \file
  *
  * \author Jacob Masen-Smith <jacob@evengx.com>
- * 
+ *
  * Isolation for iphlpapi.h functionality that defines values also defined in
  * Suricata headers, namely ICMP6_ error/status codes
  */

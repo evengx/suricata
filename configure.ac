@@ -232,7 +232,7 @@
             RUST_LDADD="-ldl -lrt -lm"
             ;;
         *-*-mingw32*)
-            CFLAGS="${CFLAGS} -DOS_WIN32"
+            CFLAGS="${CFLAGS} -DOS_WIN32 -DNTDDI_VERSION=NTDDI_VISTA -D_WIN32_WINNT=_WIN32_WINNT_VISTA"
             LDFLAGS="${LDFLAGS} -lws2_32 -liphlpapi -lwbemuuid"
             WINDOWS_PATH="yes"
             PCAP_LIB_NAME="wpcap"

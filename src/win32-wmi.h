@@ -29,7 +29,7 @@
 
 struct LiveDevice;
 
-int GetIfaceOffloadingWin32(const char *ifname);
+int GetIfaceOffloadingWin32(const char *ifname, int csum, int other);
 int DisableIfaceOffloadingWin32(LiveDevice *ldev);
 int RestoreIfaceOffloadingWin32(LiveDevice *ldev);
 
