@@ -31,6 +31,8 @@
 // clang-format off
 #include <winsock2.h>
 #include <windows.h>
+#include <ws2def.h>
+#include <ws2ipdef.h>
 #include <iphlpapi.h>
 // clang-format on
 
@@ -38,6 +40,7 @@
 #include "util-error.h"
 
 #include "win32-iphlp.h"
+#include "win32-misc.h"
 
 /**
  * \brief: get the adapter address list, which includes IP status/details
@@ -75,31 +78,10 @@ int GetIfaceMTUWin32(const char *pcap_dev)
     int mtu = 0;
 
     DWORD err = NO_ERROR;
-    wchar_t *wchar_pcap_dev = NULL;
     IP_ADAPTER_ADDRESSES *if_info_list = NULL;
 
-    /* get a wchar_t string for Win32 UTF-16 */
-    size_t n_chars = strlen(pcap_dev);
-    size_t wc_bytes =
-            sizeof(wchar_t) * (n_chars + 1); /* +1 for null terminator */
-    wchar_pcap_dev = malloc(wc_bytes);
-    memset(wchar_pcap_dev, 0, wc_bytes);
-    n_chars = mbstowcs(wchar_pcap_dev, pcap_dev, n_chars);
-    if (n_chars == (size_t)-1) {
-        goto fail;
-    }
-
     /* adapter query functions require an index, not a name */
-    ULONG if_index;
-    err = GetAdapterIndex(wchar_pcap_dev, &if_index);
-    if (err != NO_ERROR) {
-        goto fail;
-    }
-
-    err = _GetAdaptersAddresses(&if_info_list);
-    if (err != NO_ERROR) {
-        goto fail;
-    }
+    ULONG if_index = if_nametoindex(pcap_dev);
 
     /* now search for the right adapter in the list */
     IP_ADAPTER_ADDRESSES *if_info = NULL;
@@ -122,7 +104,6 @@ int GetIfaceMTUWin32(const char *pcap_dev)
 
 fail:
     free(if_info_list);
-    free(wchar_pcap_dev);
 
     const char *errbuf = NULL;
     FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
