@@ -233,7 +233,7 @@
             ;;
         *-*-mingw32*)
             CFLAGS="${CFLAGS} -DOS_WIN32 -DNTDDI_VERSION=NTDDI_VISTA -D_WIN32_WINNT=_WIN32_WINNT_VISTA"
-            LDFLAGS="${LDFLAGS} -lws2_32 -liphlpapi -lwbemuuid"
+            LDFLAGS="${LDFLAGS} -lws2_32 -liphlpapi -lwbemuuid -lOle32 -lOleAut32 -lUuid"
             WINDOWS_PATH="yes"
             PCAP_LIB_NAME="wpcap"
             AC_DEFINE([HAVE_NON_POSIX_MKDIR], [1], [mkdir is not POSIX compliant: single arg])

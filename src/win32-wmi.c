@@ -582,9 +582,8 @@ release:
 int GetIfaceOffloadingWin32(const char *pcap_dev, int csum, int other)
 {
     int ret = 0;
-    uint64_t offload_flags;
+    uint64_t offload_flags = 0;
 
-    NET_IFINDEX if_index = if_nametoindex(pcap_dev);
     /* WMI uses the friendly name as an identifier... */
     IP_ADAPTER_ADDRESSES if_info = {};
     DWORD err = GetAdapterAddressesWin32(pcap_dev, &if_info);
@@ -595,7 +594,7 @@ int GetIfaceOffloadingWin32(const char *pcap_dev, int csum, int other)
                      pcap_dev, strerror((int)err), (uint32_t)err);
         return -1;
     }
-    LPWSTR *if_friendly_name = if_info.FriendlyName;
+    LPWSTR if_friendly_name = if_info.FriendlyName;
 
     HRESULT hr = GetNdisOffload(if_friendly_name, &offload_flags);
     if (hr != S_OK) {
