@@ -47,8 +47,7 @@
 #include "util-ioctl.h"
 
 #ifdef OS_WIN32
-#include "win32-iphlp.h"
-#include "win32-wmi.h"
+#include "win32-syscall.h"
 #endif
 
 /**

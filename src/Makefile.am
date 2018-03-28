@@ -489,10 +489,8 @@ util-validate.h util-affinity.h util-affinity.c \
 util-var.c util-var.h \
 util-var-name.c util-var-name.h \
 util-vector.h \
-win32-internal.c win32-internal.h \
-win32-iphlp.c win32-iphlp.h \
+win32-syscall.c win32-syscall.h \
 win32-misc.c win32-misc.h \
-win32-wmi.c win32-wmi.h \
 win32-service.c win32-service.h \
 win32-syslog.h
 
