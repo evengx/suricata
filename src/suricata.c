@@ -173,10 +173,6 @@
 
 #include "util-lua.h"
 
-#ifdef OS_WIN32
-#include "win32-iphlp.h"
-#endif
-
 #ifdef HAVE_RUST
 #include "rust.h"
 #include "rust-core-gen.h"

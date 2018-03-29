@@ -45,7 +45,6 @@
 #include <wbemidl.h>
 #include <strsafe.h>
 #include <ntddndis.h>
-#include <ws2def.h>
 #include <ws2ipdef.h>
 #include <iphlpapi.h>
 // clang-format on
@@ -69,7 +68,7 @@ static const char *StripPcapPrefix(const char *pcap_dev)
  *
  * Clients MUST FREE the returned list to avoid memory leaks.
  */
-static DWORD GetAdaptersAddressesWin32(IP_ADAPTER_ADDRESSES **pif_info_list)
+static DWORD _GetAdaptersAddresses(IP_ADAPTER_ADDRESSES **pif_info_list)
 {
     DWORD err = NO_ERROR;
     IP_ADAPTER_ADDRESSES *if_info_list;
@@ -93,50 +92,30 @@ static DWORD GetAdaptersAddressesWin32(IP_ADAPTER_ADDRESSES **pif_info_list)
     return NO_ERROR;
 }
 
-/**
- * \brief retrieve one adapter instance and copy the data to the supplied
- * structure
- */
-static DWORD GetAdapterAddressesWin32(const char *adapter_name,
-                                      IP_ADAPTER_ADDRESSES *if_info)
+static DWORD FindAdapterAddresses(IP_ADAPTER_ADDRESSES *if_info_list,
+                                  const char *adapter_name,
+                                  IP_ADAPTER_ADDRESSES **pif_info)
 {
-    if (adapter_name == NULL) {
-        return ERROR_INVALID_PARAMETER;
-    }
-
     DWORD ret = NO_ERROR;
-
     adapter_name = StripPcapPrefix(adapter_name);
+    *pif_info = NULL;
 
-    /* obtain the luid for the adapter_name name */
-    NET_LUID net_luid = {};
-    ConvertInterfaceNameToLuidA(adapter_name, &net_luid);
-
-    IP_ADAPTER_ADDRESSES *if_info_list = NULL;
-    /* obtain the full list of adapters then iterate for net_luid */
-    ret = GetAdaptersAddressesWin32(&if_info_list);
-    if (ret != NO_ERROR) {
-        goto release;
-    }
-
-    bool found = false;
     for (IP_ADAPTER_ADDRESSES *current = if_info_list; current != NULL;
          current = current->Next) {
 
-        /* if we find the net_luid, return that data */
-        if (current->Luid.Value == net_luid.Value) {
-            *if_info = *current;
-            found = true;
+        /* if we find the adapter, return that data */
+        if (strncmp(adapter_name, current->AdapterName, strlen(adapter_name)) ==
+            0) {
+
+            *pif_info = current;
             break;
         }
     }
 
-    if (!found) {
+    if (*pif_info == NULL) {
         ret = ERROR_NOT_FOUND;
     }
 
-release:
-    free(if_info_list);
     return ret;
 }
 
@@ -149,8 +128,23 @@ int GetIfaceMTUWin32(const char *pcap_dev)
 
     int mtu = 0;
 
-    IP_ADAPTER_ADDRESSES if_info = {};
-    hr = GetAdapterAddressesWin32(pcap_dev, &if_info);
+    IP_ADAPTER_ADDRESSES *if_info_list = NULL, *if_info = NULL;
+    hr = _GetAdaptersAddresses(&if_info_list);
+    if (hr != S_OK) {
+        mtu = -1;
+        goto release;
+    }
+    hr = FindAdapterAddresses(if_info_list, pcap_dev, &if_info);
+    if (hr != S_OK) {
+        mtu = -1;
+        goto release;
+    }
+
+    mtu = if_info->Mtu;
+
+release:
+    free(if_info_list);
+
     if (hr != S_OK) {
         const char *errbuf = NULL;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER |
@@ -162,13 +156,10 @@ int GetIfaceMTUWin32(const char *pcap_dev)
                      "Failure when trying to get MTU via syscall for '%s': %s "
                      "(%" PRId32 ")",
                      pcap_dev, errbuf, (uint32_t)hr);
-
-        return -1;
+    } else {
+        SCLogInfo("Found an MTU of %d for '%s'", mtu, pcap_dev);
     }
 
-    mtu = if_info.Mtu;
-
-    SCLogInfo("Found an MTU of %d for '%s'", mtu, pcap_dev);
     return mtu;
 }
 
@@ -183,7 +174,7 @@ int GetGlobalMTUWin32()
     IP_ADAPTER_ADDRESSES *if_info_list = NULL;
 
     /* get a list of all adapters' data */
-    err = GetAdaptersAddressesWin32(&if_info_list);
+    err = _GetAdaptersAddresses(&if_info_list);
     if (err != NO_ERROR) {
         goto fail;
     }
@@ -763,16 +754,26 @@ int GetIfaceOffloadingWin32(const char *pcap_dev, int csum, int other)
     uint64_t offload_flags = 0;
 
     /* WMI uses the friendly name as an identifier... */
-    IP_ADAPTER_ADDRESSES if_info = {};
-    DWORD err = GetAdapterAddressesWin32(pcap_dev, &if_info);
+    IP_ADAPTER_ADDRESSES *if_info_list = NULL, *if_info = NULL;
+    DWORD err = _GetAdaptersAddresses(&if_info_list);
     if (err != NO_ERROR) {
         SCLogWarning(SC_ERR_SYSCALL,
                      "Failure when trying to get feature via syscall for '%s': "
                      "%s (0x%" PRIx32 ")",
                      pcap_dev, strerror((int)err), (uint32_t)err);
-        return -1;
+        ret = -1;
+        goto release;
     }
-    LPWSTR if_friendly_name = if_info.FriendlyName;
+    err = FindAdapterAddresses(if_info_list, pcap_dev, &if_info);
+    if (err != NO_ERROR) {
+        SCLogWarning(SC_ERR_SYSCALL,
+                     "Failure when trying to get feature via syscall for '%s': "
+                     "%s (0x%" PRIx32 ")",
+                     pcap_dev, strerror((int)err), (uint32_t)err);
+        ret = -1;
+        goto release;
+    }
+    LPWSTR if_friendly_name = if_info->FriendlyName;
 
     HRESULT hr = GetNdisOffload(if_friendly_name, &offload_flags);
     if (hr != S_OK) {
@@ -780,7 +781,8 @@ int GetIfaceOffloadingWin32(const char *pcap_dev, int csum, int other)
                      "Failure when trying to get feature via syscall for '%s': "
                      "%s (0x%" PRIx32 ")",
                      pcap_dev, strerror((int)hr), (uint32_t)hr);
-        return -1;
+        ret = -1;
+        goto release;
     } else if (offload_flags != 0) {
         if (csum == 1) {
             if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM) != 0) {
@@ -818,6 +820,9 @@ int GetIfaceOffloadingWin32(const char *pcap_dev, int csum, int other)
                      (offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4) != 0,
                      (offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6) != 0);
     }
+
+release:
+    free(if_info_list);
 
     return ret;
 }
