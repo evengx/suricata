@@ -100,6 +100,7 @@ static const char *GetErrorString(DWORD error_code)
 /**
  * \brief log an HRESULT in-place
  */
+#ifdef DEBUG
 #define Win32LogDebug(hr)                                                      \
     do {                                                                       \
         const char *error_string = GetErrorString(hr);                         \
@@ -126,6 +127,10 @@ static const char *GetErrorString(DWORD error_code)
         free(err_description_mb);                                              \
         SysFreeString(err_description);                                        \
     } while (0);
+#else
+#define Win32LogDebug(hr)
+#define WbemLogDebug(hr)
+#endif /* DEBUG */
 
 /**
  * \brief return only the GUID portion of the name
@@ -329,9 +334,9 @@ typedef enum Win32TcpOffloadFlags_ {
                                       WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4TX,
     WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6 = WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6RX |
                                       WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6TX,
-    WIN32_TCP_OFFLOAD_LSO = WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4 |
-                            WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4 |
-                            WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6,
+    WIN32_TCP_OFFLOAD_FLAG_LSO = WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4 |
+                                 WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4 |
+                                 WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6,
 } Win32TcpOffloadFlags;
 
 typedef struct ComInstance_ {
@@ -1095,7 +1100,7 @@ int GetIfaceOffloadingWin32(const char *pcap_dev, int csum, int other)
             }
         }
         if (other == 1) {
-            if ((offload_flags & WIN32_TCP_OFFLOAD_LSO) != 0) {
+            if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSO) != 0) {
                 ret = 1;
             }
         }
@@ -1521,9 +1526,7 @@ int DisableIfaceOffloadingWin32(LiveDevice *ldev, int csum, int other)
         offload_flags &= ~WIN32_TCP_OFFLOAD_FLAG_CSUM;
     }
     if (!other) {
-        offload_flags &= ~WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4;
-        offload_flags &= ~WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4;
-        offload_flags &= ~WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6;
+        offload_flags &= ~WIN32_TCP_OFFLOAD_FLAG_LSO;
     }
 
     err = SetNdisOffload(if_description, offload_flags, 0);
