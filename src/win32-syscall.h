@@ -33,7 +33,7 @@ int GetIfaceMTUWin32(const char *pcap_dev);
 int GetGlobalMTUWin32(void);
 
 int GetIfaceOffloadingWin32(const char *ifname, int csum, int other);
-int DisableIfaceOffloadingWin32(LiveDevice *ldev);
+int DisableIfaceOffloadingWin32(LiveDevice *ldev, int csum, int other);
 int RestoreIfaceOffloadingWin32(LiveDevice *ldev);
 
 void Win32SyscallRegisterTests(void);

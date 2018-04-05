@@ -316,10 +316,15 @@ typedef enum Win32TcpOffloadFlags_ {
                                   WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4TX |
                                   WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6RX |
                                   WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6TX,
+    WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4 = WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4RX |
+                                      WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4TX;
+    WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6 = WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6RX |
+                                      WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6TX;
     WIN32_TCP_OFFLOAD_LSO = WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4 |
                             WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4 |
                             WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6,
-} Win32TcpOffloadFlags;
+}
+Win32TcpOffloadFlags;
 
 typedef struct ComInstance_ {
     IWbemLocator *locator;
@@ -432,6 +437,32 @@ static HRESULT GetWbemClass(ComInstance *instance, LPCWSTR name,
 fail:
     SysFreeString(name_bstr);
 
+    return hr;
+}
+
+/**
+ * \brief spawns an empty class instance of the specified type
+ */
+static HRESULT GetWbemClassInstance(ComInstance *instance, LPCWSTR name,
+                                    IWbemClassObject **p_instance)
+{
+    HRESULT hr = WBEM_S_NO_ERROR;
+
+    IWbemClassObject *class = NULL;
+
+    hr = GetWbemClass(instance, name, &class);
+    if (hr != WBEM_S_NO_ERROR) {
+        goto fail;
+    }
+
+    hr = class->SpawnInstance(class, 0, p_instance);
+    if (hr != WBEM_S_NO_ERROR) {
+        SCLogWarning(SC_ERR_SYSCALL, "WMI SpawnInstance failed: 0x%" PRIx32,
+                     (uint32_t)hr);
+        goto fail;
+    }
+
+fail:
     return hr;
 }
 
@@ -687,7 +718,8 @@ static HRESULT BuildNdisObjectHeader(ComInstance *instance, int type,
     }
 
     /* obtain object */
-    hr = GetWbemClass(instance, L"MSNdis_ObjectHeader", p_ndis_object_header);
+    hr = GetWbemClassInstance(instance, L"MSNdis_ObjectHeader",
+                              p_ndis_object_header);
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
     }
@@ -739,8 +771,8 @@ static HRESULT BuildNdisWmiMethodHeader(ComInstance *instance,
                                         IWbemClassObject **p_ndis_method_header)
 {
     HRESULT hr = WBEM_S_NO_ERROR;
+
     IWbemClassObject *ndis_object_header = NULL;
-    IUnknown *ndis_object_header_unknown = NULL;
 
     if (instance == NULL || p_ndis_method_header == NULL ||
         *p_ndis_method_header != NULL) {
@@ -751,11 +783,14 @@ static HRESULT BuildNdisWmiMethodHeader(ComInstance *instance,
     }
 
     /* obtain object */
-    hr = GetWbemClass(instance, L"MSNdis_WmiMethodHeader",
-                      p_ndis_method_header);
+    hr = GetWbemClassInstance(instance, L"MSNdis_WmiMethodHeader",
+                              p_ndis_method_header);
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
     }
+
+    VARIANT param_variant;
+    VariantInit(&param_variant);
 
     /* get embedded MSNdis_ObjectHeader */
     hr = BuildNdisObjectHeader(instance, NDIS_WMI_OBJECT_TYPE_METHOD,
@@ -764,18 +799,15 @@ static HRESULT BuildNdisWmiMethodHeader(ComInstance *instance,
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
     }
-    hr = GetIUnknown(ndis_object_header, &ndis_object_header_unknown);
+    V_VT(&param_variant) = VT_UNKNOWN;
+    hr = GetIUnknown(ndis_object_header, &V_UNKNOWN(&param_variant));
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
     }
 
-    VARIANT param_variant;
-    VariantInit(&param_variant);
     IWbemClassObject *ndis_method_header = *p_ndis_method_header;
 
     /* set parameters */
-    V_VT(&param_variant) = VT_UNKNOWN;
-    V_UNKNOWN(&param_variant) = ndis_object_header_unknown;
     hr = ndis_method_header->lpVtbl->Put(ndis_method_header, L"Header", 0,
                                          &param_variant, 0);
     VariantClear(&param_variant);
@@ -843,13 +875,8 @@ fail:
 /**
  * \brief polls the NDIS TCP offloading status, namely LSOv1/v2
  */
-static HRESULT GetNdisOffload(LPCWSTR if_description, uint64_t *offload_flags)
+static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
 {
-    if (if_description == NULL) {
-        SCLogWarning(SC_ERR_SYSCALL, "No description specified for device");
-        return E_INVALIDARG;
-    }
-
     HRESULT hr = S_OK;
 
     ComInstance instance = {};
@@ -857,8 +884,13 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint64_t *offload_flags)
     WbemMethodCall call = {};
 
     IWbemClassObject *ndis_method_header = NULL;
-    IUnknown *ndis_method_header_unknown = NULL;
     IWbemClassObject *ndis_offload = NULL;
+
+    if (if_description == NULL) {
+        SCLogWarning(SC_ERR_SYSCALL, "No description specified for device");
+        hr = HRESULT_FROM_WIN32(E_INVALIDARG);
+        goto fail;
+    }
 
     LPCWSTR class_name = L"MSNdis_TcpOffloadCurrentConfig";
     LPCWSTR instance_name_fmt = L"%s=\"%s\"";
@@ -868,6 +900,12 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint64_t *offload_flags)
     instance_name[n_chars] = 0; /* defensively null-terminate */
     hr = StringCchPrintfW(instance_name, n_chars, instance_name_fmt, class_name,
                           if_description);
+    if (hr != S_OK) {
+        SCLogWarning(SC_ERR_SYSCALL,
+                     "Failed to format WMI class instance name: 0x%" PRIx32,
+                     hr);
+        goto fail;
+    }
     /* method name */
     LPCWSTR method_name = L"WmiQueryCurrentOffloadConfig";
 
@@ -891,22 +929,21 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint64_t *offload_flags)
 
     /* build parameters */
 
+    VARIANT param_variant;
+    VariantInit(&param_variant);
+
     /* Make MSNdis_WmiMethodHeader */
     hr = BuildNdisWmiMethodHeader(&instance, 0, 0, 0, 5, &ndis_method_header);
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
     }
-    hr = GetIUnknown(ndis_method_header, &ndis_method_header_unknown);
+    V_VT(&param_variant) = VT_UNKNOWN;
+    hr = GetIUnknown(ndis_method_header, &V_UNKNOWN(&param_variant));
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
     }
 
-    VARIANT param_variant;
-    VariantInit(&param_variant);
-
     /* Set in_params */
-    V_VT(&param_variant) = VT_UNKNOWN;
-    V_UNKNOWN(&param_variant) = ndis_method_header_unknown;
     hr = call.in_params->lpVtbl->Put(call.in_params, L"Header", 0,
                                      &param_variant, 0);
     VariantClear(&param_variant);
@@ -914,9 +951,6 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint64_t *offload_flags)
         Win32LogDebug(hr);
         goto fail;
     }
-
-    DebugPrintWmiObject(call.in_params);
-    DebugPrintWmiObject(call.out_params);
 
     /* execute the method */
     hr = WbemMethodCallExec(&call);
@@ -1013,7 +1047,7 @@ int GetIfaceOffloadingWin32(const char *pcap_dev, int csum, int other)
 {
     DWORD err = NO_ERROR;
     int ret = 0;
-    uint64_t offload_flags = 0;
+    uint32_t offload_flags = 0;
 
     /* WMI uses the description as an identifier... */
     IP_ADAPTER_ADDRESSES *if_info_list = NULL, *if_info = NULL;
@@ -1087,9 +1121,476 @@ fail:
     return ret;
 }
 
-int DisableIfaceOffloadingWin32(LiveDevice *ldev) { return 0; }
+static HRESULT
+BuildNdisTcpOffloadParameters(ComInstance *instance, uint32_t offload_flags,
+                              bool enable,
+                              IWbemClassObject **p_ndis_tcp_offload_parameters)
+{
+    HRESULT hr = WBEM_S_NO_ERROR;
 
-int RestoreIfaceOffloadingWin32(LiveDevice *ldev) { return 0; }
+    IWbemClassObject *ndis_object_header = NULL;
+
+    if (instance == NULL || p_ndis_method_header == NULL ||
+        *p_ndis_method_header != NULL) {
+
+        hr = HRESULT_FROM_WIN32(E_INVALIDARG);
+        Win32LogDebug(hr);
+        goto fail;
+    }
+
+    /* obtain object */
+    hr = GetWbemClassInstance(instance, L"MSNdis_TcpOffloadParameters",
+                              p_ndis_tcp_offload_parameters);
+    if (hr != WBEM_S_NO_ERROR) {
+        goto fail;
+    }
+
+    VARIANT param_variant;
+    VariantInit(&param_variant);
+
+    /* get embedded MSNdis_ObjectHeader */
+    hr = BuildNdisObjectHeader(instance, NDIS_OBJECT_TYPE_DEFAULT,
+                               NDIS_OFFLOAD_PARAMETERS_REVISION_1);
+    if (hr != WBEM_S_NO_ERROR) {
+        goto fail;
+    }
+    V_VT(&param_variant) = VT_UNKNOWN;
+    hr = GetIUnknown(ndis_object_header, &V_UNKNOWN(&param_variant));
+    if (hr != WBEM_S_NO_ERROR) {
+        goto fail;
+    }
+
+    IWbemClassObject *ndis_tcp_offload_parameters =
+            *p_ndis_tcp_offload_parameters;
+
+    /* set parameters */
+    hr = ndis_tcp_offload_parameters->lpVtbl->Put(
+            ndis_tcp_offload_parameters, L"Header", 0, &param_variant, 0);
+    VariantClear(&param_variant);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+
+    /* IPv4 csum */
+    V_VT(&param_variant) = VT_BSTR;
+    V_BSTR(&param_variant) = utob(NDIS_OFFLOAD_PARAMETERS_NO_CHANGE);
+    if (!enable && (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4) != 0) {
+        /* this is basically all disabled cases */
+        V_BSTR(&param_variant) = utob(NDIS_OFFLOAD_PARAMETERS_TX_RX_DISABLED);
+    } else if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4) ==
+               WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4) {
+        /* implied enable */
+        V_BSTR(&param_variant) = utob(NDIS_OFFLOAD_PARAMETERS_TX_RX_ENABLED);
+    } else if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4RX) != 0) {
+        /* implied enable */
+        V_BSTR(&param_variant) =
+                utob(NDIS_OFFLOAD_PARAMETERS_RX_ENABLED_TX_DISABLED);
+    } else if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4TX) != 0) {
+        /* implied enable */
+        V_BSTR(&param_variant) =
+                utob(NDIS_OFFLOAD_PARAMETERS_TX_ENABLED_RX_DISABLED);
+    }
+    hr = ndis_tcp_offload_parameters->lpVtbl->Put(
+            ndis_tcp_offload_parameters, L"IPv4Checksum", &param_variant, 0);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+    hr = ndis_tcp_offload_parameters->lpVtbl->Put(
+            ndis_tcp_offload_parameters, L"TCPIPv4Checksum", &param_variant, 0);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+    hr = ndis_tcp_offload_parameters->lpVtbl->Put(
+            ndis_tcp_offload_parameters, L"UDPIPv4Checksum", &param_variant, 0);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+    VariantClear(&param_variant);
+
+    /* IPv6 csum */
+    V_VT(&param_variant) = VT_BSTR;
+    V_BSTR(&param_variant) = utob(NDIS_OFFLOAD_PARAMETERS_NO_CHANGE);
+    if (!enable && (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6) != 0) {
+        /* this is basically all disabled cases */
+        V_BSTR(&param_variant) = utob(NDIS_OFFLOAD_PARAMETERS_TX_RX_DISABLED);
+    } else if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6) ==
+               WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6) {
+        /* implied enable */
+        V_BSTR(&param_variant) = utob(NDIS_OFFLOAD_PARAMETERS_TX_RX_ENABLED);
+    } else if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6RX) != 0) {
+        /* implied enable */
+        V_BSTR(&param_variant) =
+                utob(NDIS_OFFLOAD_PARAMETERS_RX_ENABLED_TX_DISABLED);
+    } else if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6TX) != 0) {
+        /* implied enable */
+        V_BSTR(&param_variant) =
+                utob(NDIS_OFFLOAD_PARAMETERS_TX_ENABLED_RX_DISABLED);
+    }
+    hr = ndis_tcp_offload_parameters->lpVtbl->Put(
+            ndis_tcp_offload_parameters, L"TCPIPv6Checksum", &param_variant, 0);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+    hr = ndis_tcp_offload_parameters->lpVtbl->Put(
+            ndis_tcp_offload_parameters, L"UDPIPv6Checksum", &param_variant, 0);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+    VariantClear(&param_variant);
+
+    /* LSOv1 */
+    V_VT(&param_variant) = VT_BSTR;
+    V_BSTR(&param_variant) = utob(NDIS_OFFLOAD_PARAMETERS_NO_CHANGE);
+    if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4) != 0) {
+        if (enable) {
+            V_BSTR(&param_variant) =
+                    utob(NDIS_OFFLOAD_PARAMETERS_LSOV1_ENABLED);
+        } else {
+            V_BSTR(&param_variant) =
+                    utob(NDIS_OFFLOAD_PARAMETERS_LSOV1_DISABLED);
+        }
+    }
+    hr = ndis_tcp_offload_parameters->lpVtbl->Put(ndis_tcp_offload_parameters,
+                                                  L"LsoV1", &param_variant, 0);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+    VariantClear(&param_variant);
+
+    /* LSOv2 IPv4 */
+    V_VT(&param_variant) = VT_BSTR;
+    V_BSTR(&param_variant) = utob(NDIS_OFFLOAD_PARAMETERS_NO_CHANGE);
+    if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4) != 0) {
+        if (enable) {
+            V_BSTR(&param_variant) =
+                    utob(NDIS_OFFLOAD_PARAMETERS_LSOV2_ENABLED);
+        } else {
+            V_BSTR(&param_variant) =
+                    utob(NDIS_OFFLOAD_PARAMETERS_LSOV2_DISABLED);
+        }
+    }
+    hr = ndis_tcp_offload_parameters->lpVtbl->Put(
+            ndis_tcp_offload_parameters, L"LsoV2IPv4", &param_variant, 0);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+    VariantClear(&param_variant);
+
+    /* LSOv2 IPv4 */
+    V_VT(&param_variant) = VT_BSTR;
+    V_BSTR(&param_variant) = utob(NDIS_OFFLOAD_PARAMETERS_NO_CHANGE);
+    if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6) != 0) {
+        if (enable) {
+            V_BSTR(&param_variant) =
+                    utob(NDIS_OFFLOAD_PARAMETERS_LSOV2_ENABLED);
+        } else {
+            V_BSTR(&param_variant) =
+                    utob(NDIS_OFFLOAD_PARAMETERS_LSOV2_DISABLED);
+        }
+    }
+    hr = ndis_tcp_offload_parameters->lpVtbl->Put(
+            ndis_tcp_offload_parameters, L"LsoV2IPv6", &param_variant, 0);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+    VariantClear(&param_variant);
+
+    /* currently unused fields */
+    V_VT(&param_variant) = VT_BSTR;
+    V_BSTR(&param_variant) = utob(NDIS_OFFLOAD_PARAMETERS_NO_CHANGE);
+    hr = ndis_tcp_offload_parameters->lpVtbl->Put(
+            ndis_tcp_offload_parameters, L"IPSecV1", &param_variant, 0);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+    hr = ndis_tcp_offload_parameters->lpVtbl->Put(
+            ndis_tcp_offload_parameters, L"TcpConnectionIPv4", &param_variant, 0);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+    hr = ndis_tcp_offload_parameters->lpVtbl->Put(
+            ndis_tcp_offload_parameters, L"TcpConnectionIPv6", &param_variant, 0);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+    hr = ndis_tcp_offload_parameters->lpVtbl->Put(
+            ndis_tcp_offload_parameters, L"Flags", &param_variant, 0);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+    /* further fields are for NDIS 6.1+ */
+
+fail:
+    VariantClear(&param_variant);
+
+    return hr;
+}
+
+static HRESULT SetNdisOffload(LPCWSTR if_description, uint32_t offload_flags,
+                              bool enable)
+{
+    HRESULT hr = S_OK;
+
+    ComInstance instance = {};
+    WbemMethod method = {};
+    WbemMethodCall call = {};
+
+    /* param 0 */
+    IWbemClassObject *ndis_method_header = NULL;
+    /* param 1 */
+    IWbemClassObject *ndis_tcp_offload_parameters = NULL;
+
+    if (if_description == NULL) {
+        SCLogWarning(SC_ERR_SYSCALL, "No description specified for device");
+        return E_INVALIDARG;
+    }
+
+    LPCWSTR class_name = L"MSNdis_SetTcpOffloadParameters";
+    LPCWSTR instance_name_fmt = L"%s=\"%s\"";
+    size_t n_chars = wcslen(class_name) + wcslen(if_description) +
+                     wcslen(instance_name_fmt);
+    LPWSTR instance_name = malloc((n_chars + 1) * sizeof(wchar_t));
+    instance_name[n_chars] = 0; /* defensively null-terminate */
+    hr = StringCchPrintfW(instance_name, n_chars, instance_name_fmt, class_name,
+                          if_description);
+    if (hr != S_OK) {
+        SCLogWarning(SC_ERR_SYSCALL,
+                     "Failed to format WMI class instance name: 0x%" PRIx32,
+                     hr);
+        goto fail;
+    }
+
+    /* method name */
+    LPCWSTR method_name = L"WmiSetTcpOffloadParameters";
+
+    /* connect to COM/WMI */
+    hr = ComInstanceInit(&instance, L"ROOT\\WMI");
+    if (hr != S_OK) {
+        goto fail;
+    }
+
+    /* obtain method */
+    hr = GetWbemMethod(&instance, class_name, method_name, &method);
+    if (hr != S_OK) {
+        goto fail;
+    }
+
+    /* build parameters */
+
+    VARIANT param_variant;
+    VariantInit(&param_variant);
+
+    /* Make MSNdis_WmiMethodHeader */
+    hr = BuildNdisWmiMethodHeader(&instance, 0, 0, 0, 5, &ndis_method_header);
+    if (hr != WBEM_S_NO_ERROR) {
+        goto fail;
+    }
+
+    V_VT(&param_variant) = VT_UNKNOWN;
+    hr = GetIUnknown(ndis_method_header, &V_UNKNOWN(&param_variant));
+    if (hr != WBEM_S_NO_ERROR) {
+        goto fail;
+    }
+    hr = call.in_params->lpVtbl->Put(call.in_params, L"MethodHeader", 0,
+                                     &param_variant, 0);
+    VariantClear(&param_variant);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+
+    /* Make MSNdis_TcpOffloadParameters */
+    hr = BuildNdisTcpOffloadParameters(&instance, offload_flags, enable,
+                                       &ndis_tcp_offload_parameters);
+    if (hr != WBEM_S_NO_ERROR) {
+        goto fail;
+    }
+
+    V_VT(&param_variant) = VT_UNKNOWN;
+    hr = GetIUnknown(ndis_tcp_offload_parameters, &V_UNKNOWN(&param_variant));
+    if (hr != WBEM_S_NO_ERROR) {
+        goto fail;
+    }
+    hr = call.in_params->lpVtbl->Put(call.in_params, L"TcpOffloadParameters", 0,
+                                     &param_variant, 0);
+    VariantClear(&param_variant);
+    if (hr != WBEM_S_NO_ERROR) {
+        Win32LogDebug(hr);
+        goto fail;
+    }
+
+    /* execute the method */
+    hr = WbemMethodCallExec(&call);
+    if (hr != S_OK) {
+        goto fail;
+    }
+
+fail:
+    ReleaseObject(ndis_tcp_offload_parameters);
+    ReleaseObject(ndis_method_header);
+
+    WbemMethodCallRelease(&call);
+    WbemMethodRelease(&method);
+    ComInstanceRelease(&instance);
+
+    return hr;
+}
+
+int DisableIfaceOffloadingWin32(LiveDevice *ldev, int csum, int other)
+{
+    int ret = 0;
+    DWORD err = NO_ERROR;
+    uint32_t offload_flags = 0;
+
+    if (ldev == NULL) {
+        return -1;
+    }
+
+    /* WMI uses the description as an identifier... */
+    IP_ADAPTER_ADDRESSES *if_info_list = NULL, *if_info = NULL;
+    err = _GetAdaptersAddresses(&if_info_list);
+    if (err != NO_ERROR) {
+        ret = -1;
+        goto fail;
+    }
+    err = FindAdapterAddresses(if_info_list, ldev->dev, &if_info);
+    if (err != NO_ERROR) {
+        ret = -1;
+        goto fail;
+    }
+    LPWSTR if_description = if_info->Description;
+
+    err = GetNdisOffload(if_description, &offload_flags);
+    if (err != S_OK) {
+        ret = -1;
+        goto fail;
+    }
+
+    if (!csum) {
+        offload_flags &= ~WIN32_TCP_OFFLOAD_FLAG_CSUM
+    }
+    if (!other) {
+        offload_flags &= ~WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4 offload_flags &=
+                ~WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4 offload_flags &=
+                ~WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6
+    }
+
+    err = SetNdisOffload(if_description, offload_flags, 0);
+    if (err != S_OK) {
+        ret = -1;
+        goto fail;
+    }
+
+    if (csum) {
+        if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4) != 0) {
+            SCLogPerf("%s: disabling csum IPv4 Rx offloading", ldev->dev);
+            err = SetNdisOffload(if_description,
+                                 WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4, 0);
+            if (err != S_OK) {
+                ret = -1;
+                goto fail;
+            }
+            ldev->offload_orig |=
+                    (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4);
+        }
+        if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6) != 0) {
+            SCLogPerf("%s: disabling csum IPv6 offloading", ldev->dev);
+            err = SetNdisOffload(if_description,
+                                 WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6, 0);
+            if (err != S_OK) {
+                ret = -1;
+                goto fail;
+            }
+            ldev->offload_orig |=
+                    (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6);
+        }
+    }
+    if (other) {
+        if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4)) {
+            SCLogPerf("%s: disabling LSOv1 IPv4 offloading", ldev->dev);
+            err = SetNdisOffload(if_description,
+                                 WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4, 0);
+            if (err != S_OK) {
+                ret = -1;
+                goto fail;
+            }
+            ldev->offload_orig |= WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4;
+        }
+        if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4)) {
+            SCLogPerf("%s: disabling LSOv2 IPv4 offloading", ldev->dev);
+            err = SetNdisOffload(if_description,
+                                 WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4, 0);
+            if (err != S_OK) {
+                ret = -1;
+                goto fail;
+            }
+            ldev->offload_orig |= WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4;
+        }
+        if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6)) {
+            SCLogPerf("%s: disabling LSOv2 IPv6 offloading", ldev->dev);
+            err = SetNdisOffload(if_description,
+                                 WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6, 0);
+            if (err != S_OK) {
+                ret = -1;
+                goto fail;
+            }
+            ldev->offload_orig |= WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4;
+        }
+    }
+
+fail:
+    free(if_info_list);
+
+    return ret;
+}
+
+int RestoreIfaceOffloadingWin32(LiveDevice *ldev)
+{
+    int ret = 0;
+    DWORD err = NO_ERROR;
+
+    if (ldev == NULL) {
+        return -1;
+    }
+
+    /* WMI uses the description as an identifier... */
+    IP_ADAPTER_ADDRESSES *if_info_list = NULL, *if_info = NULL;
+    err = _GetAdaptersAddresses(&if_info_list);
+    if (err != NO_ERROR) {
+        ret = -1;
+        goto fail;
+    }
+    err = FindAdapterAddresses(if_info_list, ldev->dev, &if_info);
+    if (err != NO_ERROR) {
+        ret = -1;
+        goto fail;
+    }
+    LPWSTR if_description = if_info->Description;
+
+    err = SetNdisOffload(instance, ldev->offload_orig, 1);
+    if (err != S_OK) {
+        ret = -1;
+        goto fail;
+    }
+
+fail:
+    free(if_info_list);
+
+    return ret;
+}
 
 #ifdef UNITTESTS
 static int Win32TestStripPcapPrefix(void)
