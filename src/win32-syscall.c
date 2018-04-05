@@ -72,22 +72,12 @@ static HMODULE WmiUtils(void)
 }
 
 /**
- * \brief allocate a BSTR from a converted integer
- */
-static BSTR itob(int i)
-{
-    wchar_t buf[11];
-    _itow(i, buf, 10);
-    return SysAllocString(buf);
-}
-
-/**
  * \brief allocate a BSTR from a converted unsigned integer
  */
 static BSTR utob(uint64_t ui)
 {
     wchar_t buf[20];
-    _itow(ui, buf, 10);
+    _ui64tow(ui, buf, 10);
     return SysAllocString(buf);
 }
 
@@ -116,6 +106,25 @@ static const char *GetErrorString(DWORD error_code)
         SCLogDebug("HRESULT: %s (0x%" PRIx32 ")", error_string,                \
                    (uint32_t)(hr));                                            \
         LocalFree((LPVOID)error_string);                                       \
+    } while (0);
+
+/**
+ * \brief log a WBEM error in-place
+ */
+#define WbemLogDebug(hr)                                                       \
+    do {                                                                       \
+        Win32LogDebug(hr);                                                     \
+        IErrorInfo *err_info;                                                  \
+        BSTR err_description;                                                  \
+        char *err_description_mb = NULL;                                       \
+        GetErrorInfo(0, &err_info);                                            \
+        err_info->lpVtbl->GetDescription(err_info, &err_description);          \
+        err_description_mb = malloc(SysStringLen(err_description));            \
+        wcstombs(err_description_mb, err_description,                          \
+                 SysStringLen(err_description));                               \
+        SCLogDebug("WBEM error: %s", err_description_mb);                      \
+        free(err_description_mb);                                              \
+        SysFreeString(err_description);                                        \
     } while (0);
 
 /**
@@ -349,19 +358,24 @@ static HRESULT ComInstanceInit(ComInstance *instance, LPCWSTR resource)
 
     /* connect to COM */
     hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    if (hr != S_OK) {
-        SCLogWarning(SC_ERR_SYSCALL, "COM CoInitializeEx failed: 0x%" PRIx32,
-                     (uint32_t)hr);
-        goto fail;
-    }
-    hr = CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT,
-                              RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE,
-                              NULL);
-    if (hr != S_OK) {
-        SCLogWarning(SC_ERR_SYSCALL,
-                     "COM CoInitializeSecurity failed: 0x%" PRIx32,
-                     (uint32_t)hr);
-        goto fail;
+    if (hr == S_FALSE) {
+        /* already initialized */
+        hr = S_OK;
+    } else {
+        if (hr != S_OK) {
+            SCLogWarning(SC_ERR_SYSCALL,
+                         "COM CoInitializeEx failed: 0x%" PRIx32, (uint32_t)hr);
+            goto fail;
+        }
+        hr = CoInitializeSecurity(
+                NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT,
+                RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE, NULL);
+        if (hr != S_OK) {
+            SCLogWarning(SC_ERR_SYSCALL,
+                         "COM CoInitializeSecurity failed: 0x%" PRIx32,
+                         (uint32_t)hr);
+            goto fail;
+        }
     }
 
     /* connect to WMI */
@@ -428,6 +442,7 @@ static HRESULT GetWbemClass(ComInstance *instance, LPCWSTR name,
                                                WBEM_FLAG_RETURN_WBEM_COMPLETE,
                                                NULL, p_class, NULL);
     if (hr != S_OK) {
+        WbemLogDebug(hr);
         SCLogWarning(SC_ERR_SYSCALL, "WMI GetObject failed: 0x%" PRIx32,
                      (uint32_t)hr);
         goto fail;
@@ -456,6 +471,7 @@ static HRESULT GetWbemClassInstance(ComInstance *instance, LPCWSTR name,
 
     hr = class->lpVtbl->SpawnInstance(class, 0, p_instance);
     if (hr != WBEM_S_NO_ERROR) {
+        WbemLogDebug(hr);
         SCLogWarning(SC_ERR_SYSCALL, "WMI SpawnInstance failed: 0x%" PRIx32,
                      (uint32_t)hr);
         goto fail;
@@ -507,6 +523,7 @@ static HRESULT GetWbemMethod(ComInstance *com_instance, LPCWSTR class_name,
     hr = class->lpVtbl->GetMethod(class, method_name, 0, &method->in_params,
                                   &method->out_params);
     if (hr != WBEM_S_NO_ERROR) {
+        WbemLogDebug(hr);
         SCLogWarning(SC_ERR_SYSCALL, "WMI GetMethod failed: 0x%" PRIx32,
                      (uint32_t)hr);
         goto fail;
@@ -539,7 +556,7 @@ typedef struct WbemMethodCall_ {
 
     BSTR instance_path;
 
-    IWbemClassObject *in_params, *out_params;
+    IWbemClassObject *in_params;
 } WbemMethodCall;
 
 /**
@@ -563,13 +580,12 @@ static HRESULT GetWbemMethodCall(WbemMethod *method, LPCWSTR instance_path,
     hr = method->in_params->lpVtbl->SpawnInstance(method->in_params, 0,
                                                   &call->in_params);
     if (hr != S_OK) {
+        WbemLogDebug(hr);
         SCLogWarning(SC_ERR_SYSCALL,
                      "WMI SpawnInstance failed on in_params: 0x%" PRIx32,
                      (uint32_t)hr);
         goto fail;
     }
-
-    method->out_params = NULL;
 
 fail:
     return hr;
@@ -584,7 +600,6 @@ static void WbemMethodCallRelease(WbemMethodCall *call)
         return;
     }
     ReleaseObject(call->in_params);
-    ReleaseObject(call->out_params);
 
     SysFreeString(call->instance_path);
 }
@@ -592,15 +607,17 @@ static void WbemMethodCallRelease(WbemMethodCall *call)
 /**
  * \brief executes the method after the client has set applicable parameters.
  */
-static HRESULT WbemMethodCallExec(WbemMethodCall *call)
+static HRESULT WbemMethodCallExec(WbemMethodCall *call,
+                                  IWbemClassObject **p_out_params)
 {
     HRESULT hr = S_OK;
 
     hr = call->method->com_instance->services->lpVtbl->ExecMethod(
             call->method->com_instance->services, call->instance_path,
-            call->method->method_name, 0, NULL, call->in_params,
-            &call->out_params, NULL);
+            call->method->method_name, 0, NULL, call->in_params, p_out_params,
+            NULL);
     if (hr != WBEM_S_NO_ERROR) {
+        WbemLogDebug(hr);
         SCLogWarning(SC_ERR_SYSCALL, "WMI ExecMethod failed: 0x%" PRIx32,
                      (uint32_t)hr);
         goto fail;
@@ -702,8 +719,8 @@ fail:
     return hr;
 }
 
-static HRESULT BuildNdisObjectHeader(ComInstance *instance, int type,
-                                     int revision,
+static HRESULT BuildNdisObjectHeader(ComInstance *instance, uint8_t type,
+                                     uint8_t revision, uint16_t size,
                                      IWbemClassObject **p_ndis_object_header)
 {
     HRESULT hr = WBEM_S_NO_ERROR;
@@ -734,7 +751,7 @@ static HRESULT BuildNdisObjectHeader(ComInstance *instance, int type,
                                          &param_variant, 0);
     VariantClear(&param_variant);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
 
@@ -744,19 +761,19 @@ static HRESULT BuildNdisObjectHeader(ComInstance *instance, int type,
                                          &param_variant, 0);
     VariantClear(&param_variant);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
 
     /* https://docs.microsoft.com/en-us/windows-hardware/drivers/network/ndis-object-version-issues-for-wmi
      */
     V_VT(&param_variant) = VT_I4;
-    V_I4(&param_variant) = 0xFFFF;
+    V_I4(&param_variant) = size;
     hr = ndis_object_header->lpVtbl->Put(ndis_object_header, L"Size", 0,
                                          &param_variant, 0);
     VariantClear(&param_variant);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
 
@@ -793,12 +810,13 @@ static HRESULT BuildNdisWmiMethodHeader(ComInstance *instance,
 
     /* get embedded MSNdis_ObjectHeader */
     hr = BuildNdisObjectHeader(instance, NDIS_WMI_OBJECT_TYPE_METHOD,
-                               NDIS_WMI_METHOD_HEADER_REVISION_1,
+                               NDIS_WMI_METHOD_HEADER_REVISION_1, 0xFFFF,
                                &ndis_object_header);
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
     }
     V_VT(&param_variant) = VT_UNKNOWN;
+    V_UNKNOWN(&param_variant) = NULL;
     hr = GetIUnknown(ndis_object_header, &V_UNKNOWN(&param_variant));
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
@@ -811,7 +829,7 @@ static HRESULT BuildNdisWmiMethodHeader(ComInstance *instance,
                                          &param_variant, 0);
     VariantClear(&param_variant);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
 
@@ -821,7 +839,7 @@ static HRESULT BuildNdisWmiMethodHeader(ComInstance *instance,
                                          &param_variant, 0);
     VariantClear(&param_variant);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
 
@@ -831,7 +849,7 @@ static HRESULT BuildNdisWmiMethodHeader(ComInstance *instance,
                                          &param_variant, 0);
     VariantClear(&param_variant);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
 
@@ -841,7 +859,7 @@ static HRESULT BuildNdisWmiMethodHeader(ComInstance *instance,
                                          &param_variant, 0);
     VariantClear(&param_variant);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
 
@@ -851,7 +869,7 @@ static HRESULT BuildNdisWmiMethodHeader(ComInstance *instance,
                                          &param_variant, 0);
     VariantClear(&param_variant);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
 
@@ -861,7 +879,7 @@ static HRESULT BuildNdisWmiMethodHeader(ComInstance *instance,
                                          &param_variant, 0);
     VariantClear(&param_variant);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
 
@@ -883,6 +901,7 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
     WbemMethodCall call = {};
 
     IWbemClassObject *ndis_method_header = NULL;
+    IWbemClassObject *out_params = NULL;
     IWbemClassObject *ndis_offload = NULL;
 
     if (if_description == NULL) {
@@ -937,6 +956,7 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
         goto fail;
     }
     V_VT(&param_variant) = VT_UNKNOWN;
+    V_UNKNOWN(&param_variant) = NULL;
     hr = GetIUnknown(ndis_method_header, &V_UNKNOWN(&param_variant));
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
@@ -947,18 +967,19 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
                                      &param_variant, 0);
     VariantClear(&param_variant);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
 
     /* execute the method */
-    hr = WbemMethodCallExec(&call);
+    hr = WbemMethodCallExec(&call, &out_params);
     if (hr != S_OK) {
+        Win32LogDebug(hr);
         goto fail;
     }
 
     /* inspect the result */
-    hr = WbemGetSubObject(call.out_params, L"Offload", &ndis_offload);
+    hr = WbemGetSubObject(out_params, L"Offload", &ndis_offload);
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
     }
@@ -968,7 +989,7 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
     hr = GetEncapsulation(ndis_offload, L"Checksum", L"IPv4Receive",
                           &encapsulation);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     if (encapsulation != 0) {
@@ -977,7 +998,7 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
     hr = GetEncapsulation(ndis_offload, L"Checksum", L"IPv4Transmit",
                           &encapsulation);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     if (encapsulation != 0) {
@@ -986,7 +1007,7 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
     hr = GetEncapsulation(ndis_offload, L"Checksum", L"IPv6Receive",
                           &encapsulation);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     if (encapsulation != 0) {
@@ -995,7 +1016,7 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
     hr = GetEncapsulation(ndis_offload, L"Checksum", L"IPv6Transmit",
                           &encapsulation);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     if (encapsulation != 0) {
@@ -1005,7 +1026,7 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
     /* LsoV1 */
     hr = GetEncapsulation(ndis_offload, L"LsoV1", L"WmiIPv4", &encapsulation);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     if (encapsulation != 0) {
@@ -1015,7 +1036,7 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
     /* LsoV2 */
     hr = GetEncapsulation(ndis_offload, L"LsoV2", L"WmiIPv4", &encapsulation);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     if (encapsulation != 0) {
@@ -1023,7 +1044,7 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
     }
     hr = GetEncapsulation(ndis_offload, L"LsoV2", L"WmiIPv6", &encapsulation);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     if (encapsulation != 0) {
@@ -1031,9 +1052,9 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
     }
 
 fail:
-
     ReleaseObject(ndis_method_header);
     ReleaseObject(ndis_offload);
+    ReleaseObject(out_params);
 
     WbemMethodCallRelease(&call);
     WbemMethodRelease(&method);
@@ -1150,11 +1171,13 @@ BuildNdisTcpOffloadParameters(ComInstance *instance, uint32_t offload_flags,
     /* get embedded MSNdis_ObjectHeader */
     hr = BuildNdisObjectHeader(instance, NDIS_OBJECT_TYPE_DEFAULT,
                                NDIS_OFFLOAD_PARAMETERS_REVISION_1,
+                               NDIS_SIZEOF_OFFLOAD_PARAMETERS_REVISION_1,
                                &ndis_object_header);
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
     }
     V_VT(&param_variant) = VT_UNKNOWN;
+    V_UNKNOWN(&param_variant) = NULL;
     hr = GetIUnknown(ndis_object_header, &V_UNKNOWN(&param_variant));
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
@@ -1194,21 +1217,21 @@ BuildNdisTcpOffloadParameters(ComInstance *instance, uint32_t offload_flags,
     hr = ndis_tcp_offload_parameters->lpVtbl->Put(
             ndis_tcp_offload_parameters, L"IPv4Checksum", 0, &param_variant, 0);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     hr = ndis_tcp_offload_parameters->lpVtbl->Put(ndis_tcp_offload_parameters,
                                                   L"TCPIPv4Checksum", 0,
                                                   &param_variant, 0);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     hr = ndis_tcp_offload_parameters->lpVtbl->Put(ndis_tcp_offload_parameters,
                                                   L"UDPIPv4Checksum", 0,
                                                   &param_variant, 0);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     VariantClear(&param_variant);
@@ -1236,14 +1259,14 @@ BuildNdisTcpOffloadParameters(ComInstance *instance, uint32_t offload_flags,
                                                   L"TCPIPv6Checksum", 0,
                                                   &param_variant, 0);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     hr = ndis_tcp_offload_parameters->lpVtbl->Put(ndis_tcp_offload_parameters,
                                                   L"UDPIPv6Checksum", 0,
                                                   &param_variant, 0);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     VariantClear(&param_variant);
@@ -1263,7 +1286,7 @@ BuildNdisTcpOffloadParameters(ComInstance *instance, uint32_t offload_flags,
     hr = ndis_tcp_offload_parameters->lpVtbl->Put(
             ndis_tcp_offload_parameters, L"LsoV1", 0, &param_variant, 0);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     VariantClear(&param_variant);
@@ -1283,7 +1306,7 @@ BuildNdisTcpOffloadParameters(ComInstance *instance, uint32_t offload_flags,
     hr = ndis_tcp_offload_parameters->lpVtbl->Put(
             ndis_tcp_offload_parameters, L"LsoV2IPv4", 0, &param_variant, 0);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     VariantClear(&param_variant);
@@ -1303,7 +1326,7 @@ BuildNdisTcpOffloadParameters(ComInstance *instance, uint32_t offload_flags,
     hr = ndis_tcp_offload_parameters->lpVtbl->Put(
             ndis_tcp_offload_parameters, L"LsoV2IPv6", 0, &param_variant, 0);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     VariantClear(&param_variant);
@@ -1312,29 +1335,29 @@ BuildNdisTcpOffloadParameters(ComInstance *instance, uint32_t offload_flags,
     V_VT(&param_variant) = VT_BSTR;
     V_BSTR(&param_variant) = utob(NDIS_OFFLOAD_PARAMETERS_NO_CHANGE);
     hr = ndis_tcp_offload_parameters->lpVtbl->Put(
-            ndis_tcp_offload_parameters, L"IPSecV1", 0, &param_variant, 0);
+            ndis_tcp_offload_parameters, L"IPSec", 0, &param_variant, 0);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     hr = ndis_tcp_offload_parameters->lpVtbl->Put(ndis_tcp_offload_parameters,
                                                   L"TcpConnectionIPv4", 0,
                                                   &param_variant, 0);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     hr = ndis_tcp_offload_parameters->lpVtbl->Put(ndis_tcp_offload_parameters,
                                                   L"TcpConnectionIPv6", 0,
                                                   &param_variant, 0);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     hr = ndis_tcp_offload_parameters->lpVtbl->Put(
             ndis_tcp_offload_parameters, L"Flags", 0, &param_variant, 0);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        WbemLogDebug(hr);
         goto fail;
     }
     /* further fields are for NDIS 6.1+ */
@@ -1394,6 +1417,12 @@ static HRESULT SetNdisOffload(LPCWSTR if_description, uint32_t offload_flags,
         goto fail;
     }
 
+    /* make parameter instances */
+    hr = GetWbemMethodCall(&method, instance_name, &call);
+    if (hr != S_OK) {
+        goto fail;
+    }
+
     /* build parameters */
 
     VARIANT param_variant;
@@ -1406,6 +1435,7 @@ static HRESULT SetNdisOffload(LPCWSTR if_description, uint32_t offload_flags,
     }
 
     V_VT(&param_variant) = VT_UNKNOWN;
+    V_UNKNOWN(&param_variant) = NULL;
     hr = GetIUnknown(ndis_method_header, &V_UNKNOWN(&param_variant));
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
@@ -1426,6 +1456,7 @@ static HRESULT SetNdisOffload(LPCWSTR if_description, uint32_t offload_flags,
     }
 
     V_VT(&param_variant) = VT_UNKNOWN;
+    V_UNKNOWN(&param_variant) = NULL;
     hr = GetIUnknown(ndis_tcp_offload_parameters, &V_UNKNOWN(&param_variant));
     if (hr != WBEM_S_NO_ERROR) {
         goto fail;
@@ -1439,8 +1470,9 @@ static HRESULT SetNdisOffload(LPCWSTR if_description, uint32_t offload_flags,
     }
 
     /* execute the method */
-    hr = WbemMethodCallExec(&call);
+    hr = WbemMethodCallExec(&call, NULL);
     if (hr != S_OK) {
+        Win32LogDebug(hr);
         goto fail;
     }
 
@@ -1498,63 +1530,6 @@ int DisableIfaceOffloadingWin32(LiveDevice *ldev, int csum, int other)
     if (err != S_OK) {
         ret = -1;
         goto fail;
-    }
-
-    if (csum) {
-        if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4) != 0) {
-            SCLogPerf("%s: disabling csum IPv4 Rx offloading", ldev->dev);
-            err = SetNdisOffload(if_description,
-                                 WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4, 0);
-            if (err != S_OK) {
-                ret = -1;
-                goto fail;
-            }
-            ldev->offload_orig |=
-                    (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4);
-        }
-        if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6) != 0) {
-            SCLogPerf("%s: disabling csum IPv6 offloading", ldev->dev);
-            err = SetNdisOffload(if_description,
-                                 WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6, 0);
-            if (err != S_OK) {
-                ret = -1;
-                goto fail;
-            }
-            ldev->offload_orig |=
-                    (offload_flags & WIN32_TCP_OFFLOAD_FLAG_CSUM_IP6);
-        }
-    }
-    if (other) {
-        if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4)) {
-            SCLogPerf("%s: disabling LSOv1 IPv4 offloading", ldev->dev);
-            err = SetNdisOffload(if_description,
-                                 WIN32_TCP_OFFLOAD_FLAG_LSOV1_IP4, 0);
-            if (err != S_OK) {
-                ret = -1;
-                goto fail;
-            }
-            ldev->offload_orig |= WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4;
-        }
-        if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4)) {
-            SCLogPerf("%s: disabling LSOv2 IPv4 offloading", ldev->dev);
-            err = SetNdisOffload(if_description,
-                                 WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP4, 0);
-            if (err != S_OK) {
-                ret = -1;
-                goto fail;
-            }
-            ldev->offload_orig |= WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4;
-        }
-        if ((offload_flags & WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6)) {
-            SCLogPerf("%s: disabling LSOv2 IPv6 offloading", ldev->dev);
-            err = SetNdisOffload(if_description,
-                                 WIN32_TCP_OFFLOAD_FLAG_LSOV2_IP6, 0);
-            if (err != S_OK) {
-                ret = -1;
-                goto fail;
-            }
-            ldev->offload_orig |= WIN32_TCP_OFFLOAD_FLAG_CSUM_IP4;
-        }
     }
 
 fail:

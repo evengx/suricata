@@ -44,11 +44,11 @@
 #include <net/if.h>
 #endif
 
-#include "util-ioctl.h"
-
 #ifdef OS_WIN32
 #include "win32-syscall.h"
 #endif
+
+#include "util-ioctl.h"
 
 /**
  * \brief output a majorant of hardware header length
@@ -697,6 +697,8 @@ int DisableIfaceOffloading(LiveDevice *dev, int csum, int other)
     return DisableIfaceOffloadingLinux(dev, csum, other);
 #elif defined SIOCSIFCAP
     return DisableIfaceOffloadingBSD(dev);
+#elif defined OS_WIN32
+    return DisableIfaceOffloadingWin32(dev, csum, other);
 #else
     return 0;
 #endif
@@ -710,6 +712,8 @@ void RestoreIfaceOffloading(LiveDevice *dev)
         RestoreIfaceOffloadingLinux(dev);
 #elif defined SIOCSIFCAP
         RestoreIfaceOffloadingBSD(dev);
+#elif defined OS_WIN32
+        RestoreIfaceOffloadingWin32(dev);
 #endif
     }
 }
