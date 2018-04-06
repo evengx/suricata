@@ -25,6 +25,12 @@
  *
  */
 
+// clang-format off
+#include <winsock2.h>
+#include <windows.h>
+#include <iphlpapi.h>
+// clang-format on
+
 #include "suricata-common.h"
 #include "suricata.h"
 #include "tm-threads.h"
@@ -34,8 +40,11 @@
 #include "util-device.h"
 #include "util-error.h"
 #include "util-privs.h"
+#include "util-ioctl.h"
 
 #include "runmodes.h"
+
+#include "queue.h"
 
 #include "source-windivert-prototypes.h"
 #include "source-windivert.h"
@@ -81,8 +90,6 @@ TmEcode NoWinDivertSupportExit(ThreadVars *tv, const void *initdata,
 
 #else /* implied we do have WinDivert support */
 
-#define WINDIVERT_FILTER_STRING_MAX 2048
-
 typedef struct WinDivertThreadVars_ {
     int thread_num;
 
@@ -91,6 +98,8 @@ typedef struct WinDivertThreadVars_ {
     TmSlot *slot;
 
     CaptureStats stats;
+
+    TAILQ_HEAD(, LiveDevice_) live_devices;
 } WinDivertThreadVars;
 
 #define WINDIVERT_MAX_QUEUE 16
@@ -231,6 +240,12 @@ TmEcode DecodeWinDivertThreadDeinit(ThreadVars *, void *);
 static TmEcode WinDivertRecvHelper(ThreadVars *tv, WinDivertThreadVars *);
 static TmEcode WinDivertVerdictHelper(ThreadVars *tv, Packet *p);
 static TmEcode WinDivertCloseHelper(WinDivertThreadVars *);
+
+static TmEcode WinDivertCollectFilterDevices(WinDivertThreadVars *,
+                                             WinDivertQueueVars *);
+static bool WinDivertIfaceMatchFilter(const char *filter_string, int if_index);
+static void WinDivertDisableOffloading(WinDivertThreadVars *);
+static void WinDivertRestoreOffloading(WinDivertThreadVars *);
 
 void TmModuleReceiveWinDivertRegister(void)
 {
@@ -398,9 +413,18 @@ TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *initdata,
         goto unlock;
     }
 
-    /* we open now so that we can immediately start handling packets, instead of
-     * losing however many would occur between registering the queue and
-     * starting a receive thread. */
+    TAILQ_INIT(&wd_tv->live_devices);
+
+    if (WinDivertCollectFilterDevices(wd_tv, wd_qv) == TM_ECODE_OK) {
+        WinDivertDisableOffloading(wd_tv);
+    } else {
+        SCLogWarning(SC_ERR_SYSCALL,
+                     "Failed to obtain network devices for WinDivert filter");
+    }
+
+    /* we open now so that we can immediately start handling packets,
+     * instead of losing however many would occur between registering the
+     * queue and starting a receive thread. */
     wd_qv->filter_handle = WinDivertOpen(wd_qv->filter_str, wd_qv->layer,
                                          wd_qv->priority, wd_qv->flags);
     if (wd_qv->filter_handle == INVALID_HANDLE_VALUE) {
@@ -420,6 +444,105 @@ unlock:
 
     SCMutexUnlock(&wd_qv->filter_init_mutex);
     SCReturnInt(ret);
+}
+
+/**
+ * \brief collect all devices covered by this filter in the thread vars'
+ * live devices list
+ *
+ * \param wd_tv pointer to WinDivert thread vars
+ * \param wd_qv pointer to WinDivert queue vars
+ */
+static TmEcode WinDivertCollectFilterDevices(WinDivertThreadVars *wd_tv,
+                                             WinDivertQueueVars *wd_qv)
+{
+    SCEnter();
+    TmEcode ret = TM_ECODE_OK;
+
+    IP_ADAPTER_ADDRESSES *if_info_list;
+    DWORD err = (DWORD)Win32GetAdaptersAddresses(&if_info_list);
+    if (err != NO_ERROR) {
+        ret = TM_ECODE_FAILED;
+        goto fail;
+    }
+
+    for (IP_ADAPTER_ADDRESSES *if_info = if_info_list; if_info != NULL;
+         if_info = if_info->Next) {
+
+        if (WinDivertIfaceMatchFilter(wd_qv->filter_str, if_info->IfIndex)) {
+            SCLogInfo("Found adapter %s matching WinDivert filter %s",
+                      if_info->AdapterName, wd_qv->filter_str);
+
+            LiveDevice *new_ldev = malloc(sizeof(LiveDevice));
+            new_ldev->dev = SCStrdup(if_info->AdapterName);
+            TAILQ_INSERT_TAIL(&wd_tv->live_devices, new_ldev, next);
+        } else {
+            SCLogDebug("Adapter %s does not match windivert filter %s",
+                       if_info->AdapterName, wd_qv->filter_str);
+        }
+    }
+
+fail:
+    free(if_info_list);
+
+    SCReturnInt(ret);
+}
+
+/**
+ * \brief test if the specified interface index matches the filter
+ */
+static bool WinDivertIfaceMatchFilter(const char *filter_string, int if_index)
+{
+    bool match = false;
+
+    WINDIVERT_ADDRESS if_addr = {};
+    if_addr.IfIdx = if_index;
+
+    uint8_t dummy[4] = {4, 4, 4, 4};
+
+    match = WinDivertHelperEvalFilter(filter_string, WINDIVERT_LAYER_NETWORK,
+                                      dummy, sizeof(dummy), &if_addr);
+    if (!match) {
+        int err = GetLastError();
+        if (err != 0) {
+            SCLogWarning(SC_ERR_WINDIVERT_GENERIC,
+                         "Failed to evaluate filter: 0x%" PRIx32, err);
+        }
+    }
+
+    return match;
+}
+
+/**
+ * \brief disable offload status on devices for this filter
+ *
+ * \param wd_tv pointer to WinDivert thread vars
+ */
+static void WinDivertDisableOffloading(WinDivertThreadVars *wd_tv)
+{
+    for (LiveDevice *ldev = TAILQ_FIRST(&wd_tv->live_devices); ldev != NULL;
+         ldev = TAILQ_NEXT(ldev, next)) {
+
+        if (LiveGetOffload() == 0) {
+            (void)GetIfaceOffloading(ldev->dev, 1, 1);
+        } else {
+            (void)DisableIfaceOffloading(ldev, 1, 1);
+        }
+    }
+}
+
+/**
+ * \brief enable offload status on devices for this filter
+ *
+ * \param wd_tv pointer to WinDivert thread vars
+ */
+static void WinDivertRestoreOffloading(WinDivertThreadVars *wd_tv)
+{
+    for (LiveDevice *ldev = TAILQ_FIRST(&wd_tv->live_devices); ldev != NULL;
+         ldev = TAILQ_NEXT(ldev, next)) {
+
+        RestoreIfaceOffloading(ldev);
+    }
 }
 
 /**
@@ -514,8 +637,8 @@ static TmEcode WinDivertVerdictHelper(ThreadVars *tv, Packet *p)
         SCReturnInt(TM_ECODE_OK);
     }
 
-    /* we can't verdict tunnel packets without ensuring all encapsulated packets
-     * are verdicted */
+    /* we can't verdict tunnel packets without ensuring all encapsulated
+     * packets are verdicted */
     if (IS_TUNNEL_PKT(p)) {
         bool finalVerdict = VerdictTunnelPacket(p);
         if (!finalVerdict) {
@@ -528,7 +651,8 @@ static TmEcode WinDivertVerdictHelper(ThreadVars *tv, Packet *p)
         }
     }
 
-    /* DROP simply means we do nothing; the WinDivert driver does the rest. */
+    /* DROP simply means we do nothing; the WinDivert driver does the rest.
+     */
     if (PACKET_TEST_ACTION(p, ACTION_DROP)) {
 #ifdef COUNTERS
         SCMutexLock(&wd_qv->counters_mutex);
@@ -560,7 +684,8 @@ static TmEcode WinDivertVerdictHelper(ThreadVars *tv, Packet *p)
 }
 
 /**
- * \brief init the verdict thread, which is piggybacked off the receive thread
+ * \brief init the verdict thread, which is piggybacked off the receive
+ * thread
  */
 TmEcode VerdictWinDivertThreadInit(ThreadVars *tv, const void *initdata,
                                    void **data)
@@ -577,8 +702,8 @@ TmEcode VerdictWinDivertThreadInit(ThreadVars *tv, const void *initdata,
 }
 
 /**
- * \brief deinit the verdict thread and shut down the WinDivert driver if it's
- * still up.
+ * \brief deinit the verdict thread and shut down the WinDivert driver if
+ * it's still up.
  */
 TmEcode VerdictWinDivertThreadDeinit(ThreadVars *tv, void *data)
 {
@@ -590,11 +715,12 @@ TmEcode VerdictWinDivertThreadDeinit(ThreadVars *tv, void *data)
 }
 
 /**
- * \brief decode a raw packet submitted to suricata from the WinDivert driver
+ * \brief decode a raw packet submitted to suricata from the WinDivert
+ * driver
  *
- * All WinDivert packets are IPv4/v6, but do not include the network layer to
- * differentiate the two, so instead we must check the version and go from
- * there.
+ * All WinDivert packets are IPv4/v6, but do not include the network layer
+ * to differentiate the two, so instead we must check the version and go
+ * from there.
  */
 TmEcode DecodeWinDivert(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq,
                         PacketQueue *postpq)
@@ -606,7 +732,8 @@ TmEcode DecodeWinDivert(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq,
     DecodeThreadVars *d_tv = (DecodeThreadVars *)data;
 
     /* XXX HACK: flow timeout can call us for injected pseudo packets
-     *           see bug: https://redmine.openinfosecfoundation.org/issues/1107
+     *           see bug:
+     * https://redmine.openinfosecfoundation.org/issues/1107
      */
     if (PKT_IS_PSEUDOPKT(p))
         SCReturnInt(TM_ECODE_OK);
@@ -687,13 +814,18 @@ static TmEcode WinDivertCloseHelper(WinDivertThreadVars *wd_tv)
         goto unlock;
     }
 
-    wd_qv->filter_handle = NULL;
+    (void)WinDivertRestoreOffloading(wd_tv);
 
-    SCMutexDestroy(&wd_qv->filter_init_mutex);
-    SCMutexDestroy(&wd_qv->counters_mutex);
+    wd_qv->filter_handle = NULL;
 
 unlock:
     SCMutexUnlock(&wd_qv->filter_init_mutex);
+
+    if (ret == TM_ECODE_OK) {
+        SCMutexDestroy(&wd_qv->filter_init_mutex);
+        SCMutexDestroy(&wd_qv->counters_mutex);
+    }
+
     SCReturnInt(ret);
 }
 

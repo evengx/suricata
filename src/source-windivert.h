@@ -30,7 +30,7 @@
 
 #include "windivert.h"
 
-#define WINDIVERT_FILTER_STRING_MAX 2048
+#define WINDIVERT_FILTER_MAXLEN 128 /* from windivert_device.h */
 
 typedef void *WinDivertHandle;
 
@@ -45,7 +45,7 @@ typedef struct WinDivertQueueVars_
     int queue_num;
 
     /* see https://reqrypt.org/windivert-doc.html#filter_language */
-    char filter_str[WINDIVERT_FILTER_STRING_MAX + 1];
+    char filter_str[WINDIVERT_FILTER_MAXLEN + 1];
     WINDIVERT_LAYER layer;
     int16_t priority;
     uint64_t flags;

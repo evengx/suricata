@@ -145,7 +145,8 @@ static const char *StripPcapPrefix(const char *pcap_dev)
  *
  * Clients MUST FREE the returned list to avoid memory leaks.
  */
-static DWORD _GetAdaptersAddresses(IP_ADAPTER_ADDRESSES **pif_info_list)
+uint32_t
+Win32GetAdaptersAddresses(struct _IP_ADAPTER_ADDRESSES_LH **pif_info_list)
 {
     DWORD err = NO_ERROR;
     IP_ADAPTER_ADDRESSES *if_info_list;
@@ -169,9 +170,10 @@ static DWORD _GetAdaptersAddresses(IP_ADAPTER_ADDRESSES **pif_info_list)
     return NO_ERROR;
 }
 
-static DWORD FindAdapterAddresses(IP_ADAPTER_ADDRESSES *if_info_list,
-                                  const char *adapter_name,
-                                  IP_ADAPTER_ADDRESSES **pif_info)
+uint32_t
+Win32FindAdapterAddresses(struct _IP_ADAPTER_ADDRESSES_LH *if_info_list,
+                          const char *adapter_name,
+                          IP_ADAPTER_ADDRESSES **pif_info)
 {
     DWORD ret = NO_ERROR;
     adapter_name = StripPcapPrefix(adapter_name);
@@ -206,12 +208,12 @@ int GetIfaceMTUWin32(const char *pcap_dev)
     int mtu = 0;
 
     IP_ADAPTER_ADDRESSES *if_info_list = NULL, *if_info = NULL;
-    err = _GetAdaptersAddresses(&if_info_list);
+    err = Win32GetAdaptersAddresses(&if_info_list);
     if (err != NO_ERROR) {
         mtu = -1;
         goto fail;
     }
-    err = FindAdapterAddresses(if_info_list, pcap_dev, &if_info);
+    err = Win32FindAdapterAddresses(if_info_list, pcap_dev, &if_info);
     if (err != NO_ERROR) {
         mtu = -1;
         goto fail;
@@ -247,7 +249,7 @@ int GetGlobalMTUWin32()
     IP_ADAPTER_ADDRESSES *if_info_list = NULL;
 
     /* get a list of all adapters' data */
-    err = _GetAdaptersAddresses(&if_info_list);
+    err = Win32GetAdaptersAddresses(&if_info_list);
     if (err != NO_ERROR) {
         goto fail;
     }
@@ -256,7 +258,7 @@ int GetGlobalMTUWin32()
     IP_ADAPTER_ADDRESSES *if_info = NULL;
     for (if_info = if_info_list; if_info != NULL; if_info = if_info->Next) {
         /* -1 (uint) is an invalid value */
-        if (if_info->Mtu != (uint32_t)-1) {
+        if (if_info->Mtu == (uint32_t)-1) {
             continue;
         }
 
@@ -1070,18 +1072,20 @@ fail:
 
 int GetIfaceOffloadingWin32(const char *pcap_dev, int csum, int other)
 {
+    SCLogDebug("Querying offloading for device %s", pcap_dev);
+    
     DWORD err = NO_ERROR;
     int ret = 0;
     uint32_t offload_flags = 0;
 
     /* WMI uses the description as an identifier... */
     IP_ADAPTER_ADDRESSES *if_info_list = NULL, *if_info = NULL;
-    err = _GetAdaptersAddresses(&if_info_list);
+    err = Win32GetAdaptersAddresses(&if_info_list);
     if (err != NO_ERROR) {
         ret = -1;
         goto fail;
     }
-    err = FindAdapterAddresses(if_info_list, pcap_dev, &if_info);
+    err = Win32FindAdapterAddresses(if_info_list, pcap_dev, &if_info);
     if (err != NO_ERROR) {
         ret = -1;
         goto fail;
@@ -1494,6 +1498,8 @@ fail:
 
 int DisableIfaceOffloadingWin32(LiveDevice *ldev, int csum, int other)
 {
+    SCLogDebug("Disabling offloading for device %s", ldev->dev);
+
     int ret = 0;
     DWORD err = NO_ERROR;
     uint32_t offload_flags = 0;
@@ -1504,12 +1510,12 @@ int DisableIfaceOffloadingWin32(LiveDevice *ldev, int csum, int other)
 
     /* WMI uses the description as an identifier... */
     IP_ADAPTER_ADDRESSES *if_info_list = NULL, *if_info = NULL;
-    err = _GetAdaptersAddresses(&if_info_list);
+    err = Win32GetAdaptersAddresses(&if_info_list);
     if (err != NO_ERROR) {
         ret = -1;
         goto fail;
     }
-    err = FindAdapterAddresses(if_info_list, ldev->dev, &if_info);
+    err = Win32FindAdapterAddresses(if_info_list, ldev->dev, &if_info);
     if (err != NO_ERROR) {
         ret = -1;
         goto fail;
@@ -1543,6 +1549,8 @@ fail:
 
 int RestoreIfaceOffloadingWin32(LiveDevice *ldev)
 {
+    SCLogDebug("Enabling offloading for device %s", ldev->dev);
+
     int ret = 0;
     DWORD err = NO_ERROR;
 
@@ -1552,12 +1560,12 @@ int RestoreIfaceOffloadingWin32(LiveDevice *ldev)
 
     /* WMI uses the description as an identifier... */
     IP_ADAPTER_ADDRESSES *if_info_list = NULL, *if_info = NULL;
-    err = _GetAdaptersAddresses(&if_info_list);
+    err = Win32GetAdaptersAddresses(&if_info_list);
     if (err != NO_ERROR) {
         ret = -1;
         goto fail;
     }
-    err = FindAdapterAddresses(if_info_list, ldev->dev, &if_info);
+    err = Win32FindAdapterAddresses(if_info_list, ldev->dev, &if_info);
     if (err != NO_ERROR) {
         ret = -1;
         goto fail;

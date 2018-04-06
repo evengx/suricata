@@ -29,6 +29,15 @@
 
 #include "util-device.h"
 
+struct _IP_ADAPTER_ADDRESSES_LH;
+
+uint32_t
+Win32GetAdaptersAddresses(struct _IP_ADAPTER_ADDRESSES_LH **pif_info_list);
+uint32_t
+Win32FindAdapterAddresses(struct _IP_ADAPTER_ADDRESSES_LH *if_info_list,
+                          const char *adapter_name,
+                          struct _IP_ADAPTER_ADDRESSES_LH **pif_info);
+
 int GetIfaceMTUWin32(const char *pcap_dev);
 int GetGlobalMTUWin32(void);
 
