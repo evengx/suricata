@@ -627,8 +627,7 @@ static HRESULT WbemMethodCallExec(WbemMethodCall *call,
             NULL);
     if (hr != WBEM_S_NO_ERROR) {
         WbemLogDebug(hr);
-        SCLogWarning(SC_ERR_SYSCALL, "WMI ExecMethod failed: 0x%" PRIx32,
-                     (uint32_t)hr);
+        SCLogInfo("WMI ExecMethod failed: 0x%" PRIx32, (uint32_t)hr);
         goto fail;
     }
 
