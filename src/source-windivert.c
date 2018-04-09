@@ -677,10 +677,6 @@ static TmEcode WinDivertVerdictHelper(ThreadVars *tv, Packet *p)
         SCReturnInt(TM_ECODE_OK);
     }
 
-    /* WinDivert needs checksums corrected */
-    WinDivertHelperCalcChecksums(GET_PKT_DATA(p), GET_PKT_LEN(p),
-                                 WINDIVERT_HELPER_NO_REPLACE);
-
     bool success = WinDivertSend(wd_tv->filter_handle, GET_PKT_DATA(p),
                                  GET_PKT_LEN(p), &p->windivert_v.addr, NULL);
 
