@@ -99,6 +99,8 @@ typedef struct WinDivertThreadVars_ {
 
     CaptureStats stats;
 
+    bool offload_enabled;
+
     TAILQ_HEAD(, LiveDevice_) live_devices;
 } WinDivertThreadVars;
 
@@ -330,15 +332,23 @@ static TmEcode WinDivertRecvHelper(ThreadVars *tv, WinDivertThreadVars *wd_tv)
     }
     PKT_SET_SRC(p, PKT_SRC_WIRE);
 
-    /* WinDivert needs to be fed a buffer, so we must make one available. It is
-     * highly likely we'll encounter segmentation offload so we'll just give our
-     * pool packets external buffers.
-     */
-    PacketCallocExtPkt(p, MAX_PAYLOAD_SIZE);
+    /* receive packet, depending on offload status. MTU is used as an estimator
+     * for direct data alloc size, and this is meaningless if large segments are
+     * coalesced before they reach WinDivert */
+    bool success = false;
+    if (wd_tv->offload_enabled) {
+        /* allocate external, if not already */
+        PacketCallocExtPkt(p, MAX_PAYLOAD_SIZE);
 
-    bool success =
-            WinDivertRecv(wd_tv->filter_handle, p->ext_pkt, MAX_PAYLOAD_SIZE,
-                          &p->windivert_v.addr, &p->pktlen);
+        success = WinDivertRecv(wd_tv->filter_handle, p->ext_pkt,
+                                MAX_PAYLOAD_SIZE, &p->windivert_v.addr,
+                                &p->pktlen);
+    } else {
+        success = WinDivertRecv(wd_tv->filter_handle, GET_PKT_DIRECT_DATA(p),
+                                GET_PKT_DIRECT_MAX_SIZE(p),
+                                &p->windivert_v.addr, &p->pktlen);
+    }
+
     if (!success) {
 #ifdef COUNTERS
         SCMutexLock(&wd_qv->counters_mutex);
@@ -524,9 +534,13 @@ static void WinDivertDisableOffloading(WinDivertThreadVars *wd_tv)
          ldev = TAILQ_NEXT(ldev, next)) {
 
         if (LiveGetOffload() == 0) {
-            (void)GetIfaceOffloading(ldev->dev, 1, 1);
+            if (GetIfaceOffloading(ldev->dev, 1, 1) == 1) {
+                wd_tv->offload_enabled = true;
+            }
         } else {
-            (void)DisableIfaceOffloading(ldev, 1, 1);
+            if (DisableIfaceOffloading(ldev, 1, 1) != 1) {
+                wd_tv->offload_enabled = true;
+            }
         }
     }
 }
