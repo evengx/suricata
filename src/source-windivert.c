@@ -25,14 +25,6 @@
  *
  */
 
-#ifdef WINDIVERT
-// clang-format off
-#include <winsock2.h>
-#include <windows.h>
-#include <iphlpapi.h>
-// clang-format on
-#endif
-
 #include "suricata-common.h"
 #include "suricata.h"
 #include "tm-threads.h"
@@ -50,6 +42,14 @@
 
 #include "source-windivert-prototypes.h"
 #include "source-windivert.h"
+
+#ifdef WINDIVERT
+// clang-format off
+#include <winsock2.h>
+#include <windows.h>
+#include <iptypes.h>
+// clang-format on
+#endif
 
 #ifndef WINDIVERT
 /* Gracefully handle the case where no WinDivert support is compiled in */
