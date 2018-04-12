@@ -126,6 +126,10 @@
 #include "win32-syscall.h"
 #endif
 
+#ifdef WINDIVERT
+#include "source-windivert.h"
+#endif
+
 #ifdef HAVE_NSS
 #include <prinit.h>
 #include <nss.h>
@@ -224,6 +228,9 @@ static void RegisterUnittests(void)
     StreamingBufferRegisterTests();
 #ifdef OS_WIN32
     Win32SyscallRegisterTests();
+#endif
+#ifdef WINDIVERT
+    SourceWinDivertRegisterTests();
 #endif
 }
 #endif

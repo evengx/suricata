@@ -33,8 +33,9 @@
 #include "util-debug.h"
 #include "util-device.h"
 #include "util-error.h"
-#include "util-privs.h"
 #include "util-ioctl.h"
+#include "util-privs.h"
+#include "util-unittest.h"
 
 #include "runmodes.h"
 
@@ -489,7 +490,7 @@ static TmEcode WinDivertCollectFilterDevices(WinDivertThreadVars *wd_tv,
             new_ldev->dev = SCStrdup(if_info->AdapterName);
             TAILQ_INSERT_TAIL(&wd_tv->live_devices, new_ldev, next);
         } else {
-            SCLogDebug("Adapter %s does not match windivert filter %s",
+            SCLogDebug("Adapter %s does not match WinDivert filter %s",
                        if_info->AdapterName, wd_qv->filter_str);
         }
     }
@@ -839,6 +840,58 @@ unlock:
     }
 
     SCReturnInt(ret);
+}
+
+#ifdef UNITTESTS
+static int SourceWinDivertTestIfaceMatchFilter(void)
+{
+    struct testdata {
+        const char *filter;
+        int if_index;
+        bool expected;
+    };
+
+    struct testdata tests[] = {
+            {"true", 11, true},
+            {"ifIdx=11", 11, true},
+            {"ifIdx==11", 11, true},
+            {"ifIdx!=11", 1, true},
+            {"ifIdx!=11", 11, false},
+            {"ifIdx=3", 4, false},
+            {"ifIdx=11 || ifIdx=5", 5, true},
+            {"ifIdx=11 || ifIdx=4", 5, false},
+            {"ifIdx<3 || ifIdx>7", 8, true},
+            {"ifIdx<3 || ifIdx>7", 5, false},
+            {"ifIdx>3 or ifIdx<7", 5, true},
+            {"ifIdx>3 && ifIdx<7", 5, true},
+            {"ifIdx>3 && ifIdx<7", 1, false},
+            {"(ifIdx > 3 && ifIdx < 7) or ifIdx == 11", 11, true}};
+
+    size_t count = (sizeof(tests) / sizeof(tests[0]));
+
+    for (size_t i = 0; i < count; i++) {
+        struct testdata test = tests[i];
+
+        bool actual = WinDivertIfaceMatchFilter(test.filter, test.if_index);
+        if (actual != test.expected) {
+            printf("WinDivertIfaceMatchFilter(\"%s\", %d) == %d, expected %d\n",
+                   test.filter, test.if_index, actual, test.expected);
+            // FAIL;
+        }
+    }
+    PASS;
+}
+#endif
+
+/**
+ * \brief this function registers unit tests for the WinDivert Source
+ */
+void SourceWinDivertRegisterTests()
+{
+#ifdef UNITTESTS
+    UtRegisterTest("SourceWinDivertTestIfaceMatchFilter",
+                   SourceWinDivertTestIfaceMatchFilter);
+#endif
 }
 
 #endif /* WINDIVERT */

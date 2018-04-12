@@ -76,5 +76,7 @@ int WinDivertRegisterQueue(bool forward, char *filter_str);
 void *WinDivertGetThread(int thread);
 void *WinDivertGetQueue(int queue);
 
+void SourceWinDivertRegisterTests(void);
+
 #endif /* WINDIVERT */
 #endif /* __SOURCE_WINDIVERT_H__ */
