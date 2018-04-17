@@ -33,9 +33,6 @@
  */
 
 #ifdef OS_WIN32
-#define WINVER _WIN32_WINNT_VISTA
-#define _WIN32_WINNT _WIN32_WINNT_VISTA
-#define NTDDI_VERSION NTDDI_VISTA
 
 #include <inttypes.h>
 #include <stdbool.h>
@@ -55,6 +52,97 @@
 #include "util-unittest.h"
 
 #include "win32-syscall.h"
+
+int GetIfaceMTUWin32(const char *pcap_dev) { return 0; }
+int GetGlobalMTUWin32(void) { return 0; }
+
+int GetIfaceOffloadingWin32(const char *ifname, int csum, int other)
+{
+    SCLogWarning(SC_ERR_SYSCALL, "Suricata not targeted for Windows Vista or "
+                                 "higher. Network offload interrogation not "
+                                 "available.");
+    return -1;
+}
+int DisableIfaceOffloadingWin32(LiveDevice *ldev, int csum, int other)
+{
+    SCLogWarning(SC_ERR_SYSCALL, "Suricata not targeted for Windows Vista or "
+                                 "higher. Network offload interrogation not "
+                                 "available.");
+    return -1;
+}
+int RestoreIfaceOffloadingWin32(LiveDevice *ldev)
+{
+    SCLogWarning(SC_ERR_SYSCALL, "Suricata not targeted for Windows Vista or "
+                                 "higher. Network offload interrogation not "
+                                 "available.");
+    return -1;
+}
+
+/**
+ * \brief return only the GUID portion of the name
+ */
+static const char *StripPcapPrefix(const char *pcap_dev)
+{
+    return strchr(pcap_dev, '{');
+}
+
+/**
+ * \brief get the adapter address list, which includes IP status/details
+ *
+ * Clients MUST FREE the returned list to avoid memory leaks.
+ */
+uint32_t Win32GetAdaptersAddresses(IP_ADAPTER_ADDRESSES **pif_info_list)
+{
+    DWORD err = NO_ERROR;
+    IP_ADAPTER_ADDRESSES *if_info_list;
+
+    ULONG size = 0;
+    err = GetAdaptersAddresses(AF_UNSPEC, 0, NULL, NULL, &size);
+    if (err != ERROR_BUFFER_OVERFLOW) {
+        return err;
+    }
+    if_info_list = malloc((size_t)size);
+    if (if_info_list == NULL) {
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    err = GetAdaptersAddresses(AF_UNSPEC, 0, NULL, if_info_list, &size);
+    if (err != NO_ERROR) {
+        free(if_info_list);
+        return err;
+    }
+
+    *pif_info_list = if_info_list;
+    return NO_ERROR;
+}
+
+uint32_t Win32FindAdapterAddresses(IP_ADAPTER_ADDRESSES *if_info_list,
+                                   const char *adapter_name,
+                                   IP_ADAPTER_ADDRESSES **pif_info)
+{
+    DWORD ret = NO_ERROR;
+    adapter_name = StripPcapPrefix(adapter_name);
+    *pif_info = NULL;
+
+    for (IP_ADAPTER_ADDRESSES *current = if_info_list; current != NULL;
+         current = current->Next) {
+
+        /* if we find the adapter, return that data */
+        if (strncmp(adapter_name, current->AdapterName, strlen(adapter_name)) ==
+            0) {
+
+            *pif_info = current;
+            break;
+        }
+    }
+
+    if (*pif_info == NULL) {
+        ret = ERROR_NOT_FOUND;
+    }
+
+    return ret;
+}
+
+#if NTDDI_VERSION >= NTDDI_VISTA
 
 static HMODULE wmiutils_dll = NULL;
 
@@ -132,72 +220,6 @@ static const char *GetErrorString(DWORD error_code)
 #define Win32LogDebug(hr)
 #define WbemLogDebug(hr)
 #endif /* DEBUG */
-
-/**
- * \brief return only the GUID portion of the name
- */
-static const char *StripPcapPrefix(const char *pcap_dev)
-{
-    return strchr(pcap_dev, '{');
-}
-
-/**
- * \brief get the adapter address list, which includes IP status/details
- *
- * Clients MUST FREE the returned list to avoid memory leaks.
- */
-uint32_t
-Win32GetAdaptersAddresses(struct _IP_ADAPTER_ADDRESSES_LH **pif_info_list)
-{
-    DWORD err = NO_ERROR;
-    IP_ADAPTER_ADDRESSES *if_info_list;
-
-    ULONG size = 0;
-    err = GetAdaptersAddresses(AF_UNSPEC, 0, NULL, NULL, &size);
-    if (err != ERROR_BUFFER_OVERFLOW) {
-        return err;
-    }
-    if_info_list = malloc((size_t)size);
-    if (if_info_list == NULL) {
-        return ERROR_NOT_ENOUGH_MEMORY;
-    }
-    err = GetAdaptersAddresses(AF_UNSPEC, 0, NULL, if_info_list, &size);
-    if (err != NO_ERROR) {
-        free(if_info_list);
-        return err;
-    }
-
-    *pif_info_list = if_info_list;
-    return NO_ERROR;
-}
-
-uint32_t
-Win32FindAdapterAddresses(struct _IP_ADAPTER_ADDRESSES_LH *if_info_list,
-                          const char *adapter_name,
-                          IP_ADAPTER_ADDRESSES **pif_info)
-{
-    DWORD ret = NO_ERROR;
-    adapter_name = StripPcapPrefix(adapter_name);
-    *pif_info = NULL;
-
-    for (IP_ADAPTER_ADDRESSES *current = if_info_list; current != NULL;
-         current = current->Next) {
-
-        /* if we find the adapter, return that data */
-        if (strncmp(adapter_name, current->AdapterName, strlen(adapter_name)) ==
-            0) {
-
-            *pif_info = current;
-            break;
-        }
-    }
-
-    if (*pif_info == NULL) {
-        ret = ERROR_NOT_FOUND;
-    }
-
-    return ret;
-}
 
 /**
  * \brief get the maximum transmissible unit for the specified pcap device name
@@ -1593,6 +1615,8 @@ fail:
 
     return ret;
 }
+
+#endif /* NTDDI_VERSION >= NTDDI_VISTA */
 
 #ifdef UNITTESTS
 static int Win32TestStripPcapPrefix(void)

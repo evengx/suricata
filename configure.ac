@@ -232,7 +232,7 @@
             RUST_LDADD="-ldl -lrt -lm"
             ;;
         *-*-mingw32*)
-            CFLAGS="${CFLAGS} -DOS_WIN32 -DNTDDI_VERSION=NTDDI_VISTA -D_WIN32_WINNT=_WIN32_WINNT_VISTA"
+            CFLAGS="${CFLAGS} -DOS_WIN32"
             LDFLAGS="${LDFLAGS} -lws2_32 -liphlpapi -lwbemuuid -lOle32 -lOleAut32 -lUuid"
             WINDOWS_PATH="yes"
             PCAP_LIB_NAME="wpcap"
@@ -1060,6 +1060,11 @@
     AC_CHECK_DECL([OS_WIN32],,[enable_windivert="no"])
 
     if test "x$enable_windivert" = "xyes"; then
+        # WinDivert requires Vista at a minimum. If the user has selected their own NTDDI_VERSION
+        # then don't override it.
+        AC_CHECK_DECL([NTDDI_VERSION],,
+                [LDFLAGS="${LDFLAGS} -DNTDDI_VERSION=NTDDI_VISTA -D_WIN32_WINNT=_WIN32_WINNT_VISTA"])
+
         AC_DEFINE_UNQUOTED([WINDIVERT],[1],[Enable Windows WinDivert support for inline IDP])
 
         AC_ARG_WITH(windivert_include,

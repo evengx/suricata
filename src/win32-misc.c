@@ -53,7 +53,7 @@ void unsetenv(const char *name)
 }
 
 /* these functions have been defined on Vista and later */
-#if NTDDI_VERSION < NTDDI_VISTA || _WIN32_WINNT < _WIN32_WINNT_VISTA
+#if NTDDI_VERSION < NTDDI_VISTA
 const char* inet_ntop(int af, const void *src, char *dst, uint32_t cnt)
 {
     if (af == AF_INET)
