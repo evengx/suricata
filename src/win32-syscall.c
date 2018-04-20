@@ -53,31 +53,6 @@
 
 #include "win32-syscall.h"
 
-int GetIfaceMTUWin32(const char *pcap_dev) { return 0; }
-int GetGlobalMTUWin32(void) { return 0; }
-
-int GetIfaceOffloadingWin32(const char *ifname, int csum, int other)
-{
-    SCLogWarning(SC_ERR_SYSCALL, "Suricata not targeted for Windows Vista or "
-                                 "higher. Network offload interrogation not "
-                                 "available.");
-    return -1;
-}
-int DisableIfaceOffloadingWin32(LiveDevice *ldev, int csum, int other)
-{
-    SCLogWarning(SC_ERR_SYSCALL, "Suricata not targeted for Windows Vista or "
-                                 "higher. Network offload interrogation not "
-                                 "available.");
-    return -1;
-}
-int RestoreIfaceOffloadingWin32(LiveDevice *ldev)
-{
-    SCLogWarning(SC_ERR_SYSCALL, "Suricata not targeted for Windows Vista or "
-                                 "higher. Network offload interrogation not "
-                                 "available.");
-    return -1;
-}
-
 /**
  * \brief return only the GUID portion of the name
  */
@@ -142,7 +117,34 @@ uint32_t Win32FindAdapterAddresses(IP_ADAPTER_ADDRESSES *if_info_list,
     return ret;
 }
 
-#if NTDDI_VERSION >= NTDDI_VISTA
+#if NTDDI_VERSION < NTDDI_VISTA
+
+int GetIfaceMTUWin32(const char *pcap_dev) { return 0; }
+int GetGlobalMTUWin32(void) { return 0; }
+
+int GetIfaceOffloadingWin32(const char *ifname, int csum, int other)
+{
+    SCLogWarning(SC_ERR_SYSCALL, "Suricata not targeted for Windows Vista or "
+                                 "higher. Network offload interrogation not "
+                                 "available.");
+    return -1;
+}
+int DisableIfaceOffloadingWin32(LiveDevice *ldev, int csum, int other)
+{
+    SCLogWarning(SC_ERR_SYSCALL, "Suricata not targeted for Windows Vista or "
+                                 "higher. Network offload interrogation not "
+                                 "available.");
+    return -1;
+}
+int RestoreIfaceOffloadingWin32(LiveDevice *ldev)
+{
+    SCLogWarning(SC_ERR_SYSCALL, "Suricata not targeted for Windows Vista or "
+                                 "higher. Network offload interrogation not "
+                                 "available.");
+    return -1;
+}
+
+#else /* NTDDI_VERSION >= NTDDI_VISTA */
 
 static HMODULE wmiutils_dll = NULL;
 

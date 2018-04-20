@@ -1063,7 +1063,7 @@
         # WinDivert requires Vista at a minimum. If the user has selected their own NTDDI_VERSION
         # then don't override it.
         AC_CHECK_DECL([NTDDI_VERSION],,
-                [LDFLAGS="${LDFLAGS} -DNTDDI_VERSION=NTDDI_VISTA -D_WIN32_WINNT=_WIN32_WINNT_VISTA"])
+                [CFLAGS="${CFLAGS} -DNTDDI_VERSION=NTDDI_VISTA -D_WIN32_WINNT=_WIN32_WINNT_VISTA"])
 
         AC_DEFINE_UNQUOTED([WINDIVERT],[1],[Enable Windows WinDivert support for inline IDP])
 
