@@ -59,7 +59,6 @@ TmEcode NoWinDivertSupportExit(ThreadVars *, const void *, void **);
 
 void TmModuleReceiveWinDivertRegister(void)
 {
-    memset(&tmm_modules[TMM_RECEIVEWINDIVERT], 0, sizeof(TmModule));
     tmm_modules[TMM_RECEIVEWINDIVERT].name = "ReceiveWinDivert";
     tmm_modules[TMM_RECEIVEWINDIVERT].ThreadInit = NoWinDivertSupportExit;
     tmm_modules[TMM_RECEIVEWINDIVERT].flags = TM_FLAG_RECEIVE_TM;
@@ -67,14 +66,12 @@ void TmModuleReceiveWinDivertRegister(void)
 
 void TmModuleVerdictWinDivertRegister(void)
 {
-    memset(&tmm_modules[TMM_VERDICTWINDIVERT], 0, sizeof(TmModule));
     tmm_modules[TMM_VERDICTWINDIVERT].name = "VerdictWinDivert";
     tmm_modules[TMM_VERDICTWINDIVERT].ThreadInit = NoWinDivertSupportExit;
 }
 
 void TmModuleDecodeWinDivertRegister(void)
 {
-    memset(&tmm_modules[TMM_DECODEWINDIVERT], 0, sizeof(TmModule));
     tmm_modules[TMM_DECODEWINDIVERT].name = "DecodeWinDivert";
     tmm_modules[TMM_DECODEWINDIVERT].ThreadInit = NoWinDivertSupportExit;
     tmm_modules[TMM_DECODEWINDIVERT].flags = TM_FLAG_DECODE_TM;
@@ -255,7 +252,6 @@ static void WinDivertRestoreOffloading(WinDivertThreadVars *);
 void TmModuleReceiveWinDivertRegister(void)
 {
     TmModule *tm_ptr = &tmm_modules[TMM_RECEIVEWINDIVERT];
-    memset(tm_ptr, 0, sizeof(TmModule));
 
     tm_ptr->name = "ReceiveWinDivert";
     tm_ptr->ThreadInit = ReceiveWinDivertThreadInit;
@@ -268,7 +264,6 @@ void TmModuleReceiveWinDivertRegister(void)
 void TmModuleVerdictWinDivertRegister(void)
 {
     TmModule *tm_ptr = &tmm_modules[TMM_VERDICTWINDIVERT];
-    memset(tm_ptr, 0, sizeof(TmModule));
 
     tm_ptr->name = "VerdictWinDivert";
     tm_ptr->ThreadInit = VerdictWinDivertThreadInit;
@@ -279,7 +274,6 @@ void TmModuleVerdictWinDivertRegister(void)
 void TmModuleDecodeWinDivertRegister(void)
 {
     TmModule *tm_ptr = &tmm_modules[TMM_DECODEWINDIVERT];
-    memset(tm_ptr, 0, sizeof(TmModule));
 
     tm_ptr->name = "DecodeWinDivert";
     tm_ptr->ThreadInit = DecodeWinDivertThreadInit;
