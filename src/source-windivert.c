@@ -91,13 +91,15 @@ TmEcode NoWinDivertSupportExit(ThreadVars *tv, const void *initdata,
 #else /* implied we do have WinDivert support */
 
 typedef struct WinDivertThreadVars_ {
-    int thread_num;
-
     WinDivertHandle filter_handle;
 
-    TmSlot *slot;
-
+    int thread_num;
     CaptureStats stats;
+    int64_t qpc_start_time;
+    int64_t qpc_start_count;
+    int64_t qpc_freq_usec;
+
+    TmSlot *slot;
 
     bool offload_enabled;
 
@@ -124,6 +126,43 @@ void *WinDivertGetQueue(int n)
         return NULL;
     }
     return (void *)&g_wd_qv[n];
+}
+
+/**
+ * \brief initializes QueryPerformanceCounter values so we can get absolute time
+ * from WinDivert timestamps.
+ */
+static void WinDivertInitQPCValues(WinDivertThreadVars *wd_tv)
+{
+    struct timeval now;
+
+    TimeGet(&now);
+    (void)QueryPerformanceCounter((LARGE_INTEGER *)&wd_tv->qpc_start_count);
+
+    wd_tv->qpc_start_time =
+            (uint64_t)now.tv_sec * (1000 * 1000) + (uint64_t)now.tv_usec;
+
+    (void)QueryPerformanceFrequency((LARGE_INTEGER *)&wd_tv->qpc_freq_usec);
+    /* \bug: clock drift? */
+    wd_tv->qpc_freq_usec /= 1000 * 1000;
+}
+
+/**
+ * \brief gets a timeval from a WinDivert timestamp
+ */
+static struct timeval WinDivertTimestampToTimeval(WinDivertThreadVars *wd_tv,
+                                                  INT64 timestamp_count)
+{
+    struct timeval ts;
+
+    int64_t qpc_delta = (int64_t)timestamp_count - wd_tv->qpc_start_count;
+    int64_t unix_usec =
+            wd_tv->qpc_start_time + (qpc_delta / wd_tv->qpc_freq_usec);
+
+    ts.tv_sec = (long)(unix_usec / (1000 * 1000));
+    ts.tv_usec = (long)(unix_usec - (int64_t)ts.tv_sec * (1000 * 1000));
+
+    return ts;
 }
 
 /**
@@ -179,6 +218,8 @@ int WinDivertRegisterQueue(bool forward, char *filter_str)
     /* init queue vars */
     WinDivertQueueVars *wd_qv = &g_wd_qv[g_wd_num];
     wd_qv->queue_num = g_wd_num;
+
+    WinDivertInitQPCValues(wd_tv);
 
     /* copy filter to persistent storage */
     size_t filter_len = strlen(filter_str);
@@ -363,6 +404,7 @@ static TmEcode WinDivertRecvHelper(ThreadVars *tv, WinDivertThreadVars *wd_tv)
     }
     SCLogDebug("Packet received, length %" PRId32 "", GET_PKT_LEN(p));
 
+    p->ts = WinDivertTimestampToTimeval(wd_tv, p->windivert_v.addr.Timestamp);
     p->windivert_v.thread_num = wd_tv->thread_num;
 
 #ifdef COUNTERS
