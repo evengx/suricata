@@ -47,9 +47,16 @@
 #include <iphlpapi.h>
 // clang-format on
 
+/* Windows strsafe.h defines _snprintf as an undefined warning type */
+#undef _snprintf
+#define _snprintf StringCbPrintfA
+
 #include "util-debug.h"
 #include "util-device.h"
+#include "util-mem.h"
 #include "util-unittest.h"
+
+#include "suricata.h"
 
 #include "win32-syscall.h"
 
@@ -76,13 +83,13 @@ uint32_t Win32GetAdaptersAddresses(IP_ADAPTER_ADDRESSES **pif_info_list)
     if (err != ERROR_BUFFER_OVERFLOW) {
         return err;
     }
-    if_info_list = malloc((size_t)size);
+    if_info_list = SCMalloc((size_t)size);
     if (if_info_list == NULL) {
         return ERROR_NOT_ENOUGH_MEMORY;
     }
     err = GetAdaptersAddresses(AF_UNSPEC, 0, NULL, if_info_list, &size);
     if (err != NO_ERROR) {
-        free(if_info_list);
+        SCFree(if_info_list);
         return err;
     }
 
@@ -210,12 +217,12 @@ static const char *GetErrorString(DWORD error_code)
         char *err_description_mb = NULL;                                       \
         GetErrorInfo(0, &err_info);                                            \
         err_info->lpVtbl->GetDescription(err_info, &err_description);          \
-        err_description_mb = malloc(SysStringLen(err_description) + 1);      \
+        err_description_mb = SCMalloc(SysStringLen(err_description) + 1);      \
         err_description_mb[SysStringLen(err_description)] = 0;                 \
         wcstombs(err_description_mb, err_description,                          \
                  SysStringLen(err_description));                               \
         SCLogDebug("WBEM error: %s", err_description_mb);                      \
-        free(err_description_mb);                                            \
+        SCFree(err_description_mb);                                            \
         SysFreeString(err_description);                                        \
     } while (0);
 #else
@@ -247,7 +254,7 @@ int GetIfaceMTUWin32(const char *pcap_dev)
     mtu = if_info->Mtu;
 
 fail:
-    free(if_info_list);
+    SCFree(if_info_list);
 
     if (err != S_OK) {
         const char *errbuf = GetErrorString(err);
@@ -288,18 +295,16 @@ int GetGlobalMTUWin32()
         }
 
         /* we want to return the largest MTU value so we allocate enough */
-        if (if_info->Mtu > mtu) {
-            mtu = if_info->Mtu;
-        }
+        mtu = max(mtu, if_info->Mtu);
     }
 
-    free(if_info_list);
+    SCFree(if_info_list);
 
     SCLogInfo("Found a global MTU of %" PRIu32, mtu);
     return (int)mtu;
 
 fail:
-    free(if_info_list);
+    SCFree(if_info_list);
 
     const char *errbuf = NULL;
     FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
@@ -332,11 +337,11 @@ fail:
         }                                                                      \
         BSTR str = NULL;                                                       \
         (object)->lpVtbl->GetObjectText((object), 0, &str);                    \
-        char *strA = malloc(SysStringLen(str) + 1);                          \
+        char *strA = SCMalloc(SysStringLen(str) + 1);                          \
         strA[SysStringLen(str)] = 0;                                           \
         wcstombs(strA, str, SysStringLen(str));                                \
         SCLogDebug("\n%s", strA);                                              \
-        free(strA);                                                          \
+        SCFree(strA);                                                          \
         SysFreeString(str);                                                    \
     } while (0);
 #else
@@ -946,7 +951,7 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
     LPCWSTR instance_name_fmt = L"%s=\"%s\"";
     size_t n_chars = wcslen(class_name) + wcslen(if_description) +
                      wcslen(instance_name_fmt);
-    LPWSTR instance_name = malloc((n_chars + 1) * sizeof(wchar_t));
+    LPWSTR instance_name = SCMalloc((n_chars + 1) * sizeof(wchar_t));
     instance_name[n_chars] = 0; /* defensively null-terminate */
     hr = StringCchPrintfW(instance_name, n_chars, instance_name_fmt, class_name,
                           if_description);
@@ -1007,14 +1012,14 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
     hr = WbemMethodCallExec(&call, &out_params);
     if (hr != S_OK) {
         size_t if_description_len = wcslen(if_description);
-        char *if_description_ansi = malloc(if_description_len + 1);
+        char *if_description_ansi = SCMalloc(if_description_len + 1);
         if_description_ansi[if_description_len] = 0;
         wcstombs(if_description_ansi, if_description, if_description_len);
         SCLogWarning(SC_ERR_SYSCALL,
                      "Obtaining offload state failed, device \"%s\" may not "
                      "support offload. Error: 0x%" PRIx32,
                      if_description_ansi, (uint32_t)hr);
-        free(if_description_ansi);
+        SCFree(if_description_ansi);
         Win32LogDebug(hr);
         goto fail;
     }
@@ -1179,7 +1184,7 @@ fail:
         LocalFree((LPVOID)errstr);
     }
 
-    free(if_info_list);
+    SCFree(if_info_list);
 
     return ret;
 }
@@ -1434,7 +1439,7 @@ static HRESULT SetNdisOffload(LPCWSTR if_description, uint32_t offload_flags,
     LPCWSTR instance_name_fmt = L"%s=\"%s\"";
     size_t n_chars = wcslen(class_name) + wcslen(if_description) +
                      wcslen(instance_name_fmt);
-    LPWSTR instance_name = malloc((n_chars + 1) * sizeof(wchar_t));
+    LPWSTR instance_name = SCMalloc((n_chars + 1) * sizeof(wchar_t));
     instance_name[n_chars] = 0; /* defensively null-terminate */
     hr = StringCchPrintfW(instance_name, n_chars, instance_name_fmt, class_name,
                           if_description);
@@ -1576,7 +1581,7 @@ int DisableIfaceOffloadingWin32(LiveDevice *ldev, int csum, int other)
     }
 
 fail:
-    free(if_info_list);
+    SCFree(if_info_list);
 
     return ret;
 }
@@ -1613,7 +1618,7 @@ int RestoreIfaceOffloadingWin32(LiveDevice *ldev)
     }
 
 fail:
-    free(if_info_list);
+    SCFree(if_info_list);
 
     return ret;
 }
