@@ -24,8 +24,8 @@
  * SEI CERT C Coding Standard MSC30-C
  */
 
-#include "util-random.h"
 #include "suricata-common.h"
+#include "util-random.h"
 
 #if defined(HAVE_WINCRYPT_H) && defined(OS_WIN32)
 #include <wincrypt.h>

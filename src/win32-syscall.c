@@ -210,12 +210,12 @@ static const char *GetErrorString(DWORD error_code)
         char *err_description_mb = NULL;                                       \
         GetErrorInfo(0, &err_info);                                            \
         err_info->lpVtbl->GetDescription(err_info, &err_description);          \
-        err_description_mb = malloc(SysStringLen(err_description) + 1);        \
+        err_description_mb = malloc(SysStringLen(err_description) + 1);      \
         err_description_mb[SysStringLen(err_description)] = 0;                 \
         wcstombs(err_description_mb, err_description,                          \
                  SysStringLen(err_description));                               \
         SCLogDebug("WBEM error: %s", err_description_mb);                      \
-        free(err_description_mb);                                              \
+        free(err_description_mb);                                            \
         SysFreeString(err_description);                                        \
     } while (0);
 #else
@@ -332,11 +332,11 @@ fail:
         }                                                                      \
         BSTR str = NULL;                                                       \
         (object)->lpVtbl->GetObjectText((object), 0, &str);                    \
-        char *strA = malloc(SysStringLen(str) + 1);                            \
+        char *strA = malloc(SysStringLen(str) + 1);                          \
         strA[SysStringLen(str)] = 0;                                           \
         wcstombs(strA, str, SysStringLen(str));                                \
         SCLogDebug("\n%s", strA);                                              \
-        free(strA);                                                            \
+        free(strA);                                                          \
         SysFreeString(str);                                                    \
     } while (0);
 #else

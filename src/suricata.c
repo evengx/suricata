@@ -2486,7 +2486,6 @@ static int ConfigGetCaptureValue(SCInstance *suri)
 #endif /* WINDIVERT */
             case RUNMODE_PCAP_DEV:
             case RUNMODE_AFP_DEV:
-            /* \bug: are PCAP/AFP supposed to fall through to strip_trailing_plus? */
             case RUNMODE_NETMAP:
                 /* in netmap igb0+ has a special meaning, however the
                  * interface really is igb0 */

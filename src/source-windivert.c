@@ -374,18 +374,20 @@ static TmEcode WinDivertRecvHelper(ThreadVars *tv, WinDivertThreadVars *wd_tv)
      * for direct data alloc size, and this is meaningless if large segments are
      * coalesced before they reach WinDivert */
     bool success = false;
+    uint32_t pktlen = 0;
     if (wd_tv->offload_enabled) {
         /* allocate external, if not already */
         PacketCallocExtPkt(p, MAX_PAYLOAD_SIZE);
 
         success = WinDivertRecv(wd_tv->filter_handle, p->ext_pkt,
                                 MAX_PAYLOAD_SIZE, &p->windivert_v.addr,
-                                &p->pktlen);
+                                &pktlen);
     } else {
         success = WinDivertRecv(wd_tv->filter_handle, GET_PKT_DIRECT_DATA(p),
                                 GET_PKT_DIRECT_MAX_SIZE(p),
-                                &p->windivert_v.addr, &p->pktlen);
+                                &p->windivert_v.addr, &pktlen);
     }
+    SET_PKT_LEN(p, pktlen);
 
     if (!success) {
 #ifdef COUNTERS
@@ -512,7 +514,7 @@ static TmEcode WinDivertCollectFilterDevices(WinDivertThreadVars *wd_tv,
     DWORD err = (DWORD)Win32GetAdaptersAddresses(&if_info_list);
     if (err != NO_ERROR) {
         ret = TM_ECODE_FAILED;
-        goto fail;
+        goto release;
     }
 
     for (IP_ADAPTER_ADDRESSES *if_info = if_info_list; if_info != NULL;
@@ -522,8 +524,16 @@ static TmEcode WinDivertCollectFilterDevices(WinDivertThreadVars *wd_tv,
             SCLogInfo("Found adapter %s matching WinDivert filter %s",
                       if_info->AdapterName, wd_qv->filter_str);
 
-            LiveDevice *new_ldev = malloc(sizeof(LiveDevice));
+            LiveDevice *new_ldev = SCCalloc(1, sizeof(LiveDevice));
+            if (new_ldev == NULL) {
+                ret = TM_ECODE_FAILED;
+                goto release;
+            }
             new_ldev->dev = SCStrdup(if_info->AdapterName);
+            if (new_ldev->dev == NULL) {
+                ret = TM_ECODE_FAILED;
+                goto release;
+            }
             TAILQ_INSERT_TAIL(&wd_tv->live_devices, new_ldev, next);
         } else {
             SCLogDebug("Adapter %s does not match WinDivert filter %s",
@@ -531,8 +541,8 @@ static TmEcode WinDivertCollectFilterDevices(WinDivertThreadVars *wd_tv,
         }
     }
 
-fail:
-    free(if_info_list);
+release:
+    SCFree(if_info_list);
 
     SCReturnInt(ret);
 }
@@ -653,7 +663,6 @@ TmEcode VerdictWinDivert(ThreadVars *tv, Packet *p, void *data, PacketQueue *pq,
 
     TmEcode ret = TM_ECODE_OK;
 
-    /* \todo do we need to specifically handle tunnel packets like NFQ? */
     ret = WinDivertVerdictHelper(tv, p);
     if (ret != TM_ECODE_OK) {
         SCReturnInt(ret);
@@ -912,7 +921,7 @@ static int SourceWinDivertTestIfaceMatchFilter(void)
         if (actual != test.expected) {
             printf("WinDivertIfaceMatchFilter(\"%s\", %d) == %d, expected %d\n",
                    test.filter, test.if_index, actual, test.expected);
-            // FAIL;
+            FAIL;
         }
     }
     PASS;

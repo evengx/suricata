@@ -28,7 +28,7 @@ command in an elevated command prompt or terminal:
 For information on the WinDivert filter language, see
 https://www.reqrypt.org/windivert-doc.html#filter_language
 
-If Suricata is running on a gateway and is meant to protect the computers behind
+If Suricata is running on a gateway and is meant to protect the network behind
 that gateway, you need to run WinDivert at the NETWORK_FORWARD layer. This can
 be achieved using the following command:
 

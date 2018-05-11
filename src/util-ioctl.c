@@ -57,8 +57,6 @@
  */
 static int GetIfaceMaxHWHeaderLength(const char *pcap_dev)
 {
-    /* \bug: this isn't necessarily universal (my Ubuntu WiFi device is wlp1s0),
-     * and doesn't work for Windows devices. */
     if ((!strcmp("eth", pcap_dev))
             ||
             (!strcmp("br", pcap_dev))
