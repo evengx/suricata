@@ -49,6 +49,7 @@
 #include <winsock2.h>
 #include <windows.h>
 #include <iptypes.h>
+#include <winerror.h>
 // clang-format on
 #endif
 
@@ -128,9 +129,77 @@ void *WinDivertGetQueue(int n)
     return (void *)&g_wd_qv[n];
 }
 
+// not defined in MinGW winerror.h
+#define ERROR_INVALID_IMAGE_HASH 577L
+#define ERROR_DATA_NOT_ACCEPTED 592L
+
 /**
- * \brief initializes QueryPerformanceCounter values so we can get absolute time
- * from WinDivert timestamps.
+ * \brief return an error description for Win32 error values commonly returned
+ * by WinDivert
+ */
+static const char *WinDivertGetErrorString(DWORD error_code)
+{
+    switch (error_code) {
+        // WinDivertOpen errors
+        case ERROR_FILE_NOT_FOUND:
+            return "The driver files WinDivert32.sys or WinDivert64.sys were "
+                   "not found.";
+        case ERROR_ACCESS_DENIED:
+            return "The calling application does not have Administrator "
+                   "privileges.";
+        case ERROR_INVALID_PARAMETER:
+            return "This indicates an invalid packet filter string, layer, "
+                   "priority, or flags.";
+        case ERROR_INVALID_IMAGE_HASH:
+            return "The WinDivert32.sys or WinDivert64.sys driver does not "
+                   "have a valid digital signature, or your copy of Windows is "
+                   "not up-to-date. Windows 7 and Server 2008 users need to "
+                   "run Windows Update or install the following patch from "
+                   "Microsoft: http://support.microsoft.com/kb/2949927";
+        case ERROR_DRIVER_BLOCKED:
+            return "This error occurs for various reasons, including: "
+                   "attempting to load the 32-bit WinDivert.sys driver on a "
+                   "64-bit system (or vice versa); the WinDivert.sys driver is "
+                   "blocked by security software; or you are using a "
+                   "virtualization environment that does not support "
+                   "drivers.";
+        case EPT_S_NOT_REGISTERED:
+            return "This error occurs when the Base Filtering Engine service "
+                   "has been disabled.";
+        case ERROR_PROC_NOT_FOUND:
+            return "The error may occur for Windows Vista users. The "
+                   "solution "
+                   "is to install the following patch from Microsoft: "
+                   "http://support.microsoft.com/kb/2761494.";
+
+        // WinDivertSend errors
+        case ERROR_HOST_UNREACHABLE:
+            return "This error occurs when an impostor packet (with "
+                   "pAddr->Impostor set to 1) is injected and the ip.TTL or "
+                   "ipv6.HopLimit field goes to zero. This is a defense of "
+                   "last resort against infinite loops caused by impostor "
+                   "packets.";
+        case ERROR_DATA_NOT_ACCEPTED:
+            return "This error is returned when the user application attempts "
+                   "to inject a malformed packet. It may also be returned for "
+                   "valid inbound packets, and the Windows TCP/IP stack "
+                   "rejects the packet for some reason.";
+        case ERROR_RETRY:
+            return "The underlying cause of this error is unknown. However, "
+                   "this error usually occurs when certain kinds of "
+                   "anti-virus/firewall/security software is installed, and "
+                   "the error message usually resolves once the offending "
+                   "program is uninstalled. This suggests a software "
+                   "compatibility problem.";
+
+        default:
+            return "";
+    }
+}
+
+/**
+ * \brief initializes QueryPerformanceCounter values so we can get
+ * absolute time from WinDivert timestamps.
  */
 static void WinDivertInitQPCValues(WinDivertThreadVars *wd_tv)
 {
@@ -379,9 +448,9 @@ static TmEcode WinDivertRecvHelper(ThreadVars *tv, WinDivertThreadVars *wd_tv)
         /* allocate external, if not already */
         PacketCallocExtPkt(p, MAX_PAYLOAD_SIZE);
 
-        success = WinDivertRecv(wd_tv->filter_handle, p->ext_pkt,
-                                MAX_PAYLOAD_SIZE, &p->windivert_v.addr,
-                                &pktlen);
+        success =
+                WinDivertRecv(wd_tv->filter_handle, p->ext_pkt,
+                              MAX_PAYLOAD_SIZE, &p->windivert_v.addr, &pktlen);
     } else {
         success = WinDivertRecv(wd_tv->filter_handle, GET_PKT_DIRECT_DATA(p),
                                 GET_PKT_DIRECT_MAX_SIZE(p),
@@ -479,8 +548,11 @@ TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *initdata,
     wd_qv->filter_handle = WinDivertOpen(wd_qv->filter_str, wd_qv->layer,
                                          wd_qv->priority, wd_qv->flags);
     if (wd_qv->filter_handle == INVALID_HANDLE_VALUE) {
-        SCLogError(SC_ERR_FATAL, "WinDivertOpen failed, error: %" PRIu32 "",
-                   (uint32_t)(GetLastError()));
+        DWORD error_code = GetLastError();
+        SCLogError(SC_ERR_FATAL, "WinDivertOpen failed: (%" PRIu32 ") %s: %s",
+                   (uint32_t)error_code, Win32GetErrorString(error_code, NULL),
+                   WinDivertGetErrorString(error_code));
+
         ret = TM_ECODE_FAILED;
         goto unlock;
     }

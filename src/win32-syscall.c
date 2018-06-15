@@ -181,34 +181,36 @@ static BSTR utob(uint64_t ui)
 /**
  * \brief Get the win32/wmi error string
  */
-static const char *GetErrorString(DWORD error_code)
+const char *Win32GetErrorString(DWORD error_code, HMODULE ext_module)
 {
     char *error_string = NULL;
     FormatMessageA(
             FORMAT_MESSAGE_FROM_HMODULE | FORMAT_MESSAGE_ALLOCATE_BUFFER |
                     FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-            WmiUtils(), error_code, 0, (LPTSTR)&error_string, 0, NULL);
+            ext_module, error_code, 0, (LPTSTR)&error_string, 0, NULL);
 
     error_string[strlen(error_string) - 2] = 0; // remove line breaks
 
     return error_string;
 }
 
+#ifdef DEBUG
+#define Win32HResultLogDebug(hr)                                               \
+    _Win32HResultLog(SC_LOG_DEBUG, (hr), __FILE__, __FUNCTION__, __LINE__)
+#else
+#define Win32HResultLogDebug(hr)
+#endif /* DEBUG */
+
 /**
  * \brief log an HRESULT
  */
-#define Win32LogDebug(hr)                                                      \
-    (_Win32LogDebug)((hr), __FILE__, __FUNCTION__, __LINE__)
-
-static void _Win32LogDebug(HRESULT hr, const char *file, const char *function,
-                           const int line)
+static void _Win32HResultLog(SCLogLevel level, HRESULT hr, const char *file,
+                             const char *function, const int line)
 {
-#ifdef DEBUG
-    const char *error_string = GetErrorString(hr);
-    SCLog(SC_LOG_DEBUG, file, function, line, "HRESULT: %s (0x%" PRIx32 ")",
+    const char *error_string = Win32GetErrorString(hr, WmiUtils());
+    SCLog(level, file, function, line, "HRESULT: %s (0x%" PRIx32 ")",
           error_string, (uint32_t)(hr));
     LocalFree((LPVOID)error_string);
-#endif /* DEBUG */
 }
 
 /**
@@ -224,7 +226,7 @@ static void _WbemLogDebug(HRESULT hr, const char *file, const char *function,
     BSTR err_description;
     char *err_description_mb = NULL;
 
-    _Win32LogDebug(hr, file, function, line);
+    _Win32HResultLog(SC_LOG_DEBUG, hr, file, function, line);
 
     GetErrorInfo(0, &err_info);
     if (!SUCCEEDED(
@@ -282,7 +284,7 @@ release:
     SCFree(if_info_list);
 
     if (err != S_OK) {
-        const char *errbuf = GetErrorString(err);
+        const char *errbuf = Win32GetErrorString(err, WmiUtils());
         SCLogWarning(SC_ERR_SYSCALL,
                      "Failure when trying to get MTU via syscall for '%s': %s "
                      "(%" PRId32 ")",
@@ -468,7 +470,7 @@ static HRESULT GetWbemClass(ComInstance *instance, LPCWSTR name,
     if (instance == NULL || name == NULL || p_class == NULL ||
         *p_class != NULL) {
         hr = HRESULT_FROM_WIN32(E_INVALIDARG);
-        Win32LogDebug(hr);
+        Win32HResultLogDebug(hr);
         goto release;
     }
 
@@ -661,7 +663,7 @@ static HRESULT WbemMethodCallExec(WbemMethodCall *call,
             NULL);
     if (hr != WBEM_S_NO_ERROR) {
         WbemLogDebug(hr);
-        SCLogInfo("WMI ExecMethod failed: 0x%" PRIx32, (uint32_t)hr);
+        SCLogDebug("WMI ExecMethod failed: 0x%" PRIx32, (uint32_t)hr);
         goto release;
     }
 
@@ -744,7 +746,7 @@ static HRESULT GetIUnknown(IWbemClassObject *object, IUnknown **p_unknown)
 
     if (object == NULL || p_unknown == NULL || *p_unknown != NULL) {
         hr = HRESULT_FROM_WIN32(E_INVALIDARG);
-        Win32LogDebug(hr);
+        Win32HResultLogDebug(hr);
         goto release;
     }
 
@@ -771,7 +773,7 @@ static HRESULT BuildNdisObjectHeader(ComInstance *instance, uint8_t type,
         *p_ndis_object_header != NULL) {
 
         hr = HRESULT_FROM_WIN32(E_INVALIDARG);
-        Win32LogDebug(hr);
+        Win32HResultLogDebug(hr);
         goto release;
     }
 
@@ -836,7 +838,7 @@ static HRESULT BuildNdisWmiMethodHeader(ComInstance *instance,
         *p_ndis_method_header != NULL) {
 
         hr = HRESULT_FROM_WIN32(E_INVALIDARG);
-        Win32LogDebug(hr);
+        Win32HResultLogDebug(hr);
         goto release;
     }
 
@@ -1030,12 +1032,11 @@ static HRESULT GetNdisOffload(LPCWSTR if_description, uint32_t *offload_flags)
         }
         if_description_ansi[if_description_len] = 0;
         wcstombs(if_description_ansi, if_description, if_description_len);
-        SCLogWarning(SC_ERR_SYSCALL,
-                     "Obtaining offload state failed, device \"%s\" may not "
-                     "support offload. Error: 0x%" PRIx32,
-                     if_description_ansi, (uint32_t)hr);
+        SCLogInfo("Obtaining offload state failed, device \"%s\" may not "
+                  "support offload. Error: 0x%" PRIx32,
+                  if_description_ansi, (uint32_t)hr);
         SCFree(if_description_ansi);
-        Win32LogDebug(hr);
+        Win32HResultLogDebug(hr);
         goto release;
     }
 
@@ -1191,7 +1192,7 @@ int GetIfaceOffloadingWin32(const char *pcap_dev, int csum, int other)
 
 release:
     if (ret == -1) {
-        const char *errstr = GetErrorString(err);
+        const char *errstr = Win32GetErrorString(err, WmiUtils());
         SCLogWarning(SC_ERR_SYSCALL,
                      "Failure when trying to get feature via syscall for '%s': "
                      "%s (0x%" PRIx32 ")",
@@ -1217,7 +1218,7 @@ BuildNdisTcpOffloadParameters(ComInstance *instance, uint32_t offload_flags,
         *p_ndis_tcp_offload_parameters != NULL) {
 
         hr = HRESULT_FROM_WIN32(E_INVALIDARG);
-        Win32LogDebug(hr);
+        Win32HResultLogDebug(hr);
         goto release;
     }
 
@@ -1254,7 +1255,7 @@ BuildNdisTcpOffloadParameters(ComInstance *instance, uint32_t offload_flags,
             ndis_tcp_offload_parameters, L"Header", 0, &param_variant, 0);
     VariantClear(&param_variant);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        Win32HResultLogDebug(hr);
         goto release;
     }
 
@@ -1512,7 +1513,7 @@ static HRESULT SetNdisOffload(LPCWSTR if_description, uint32_t offload_flags,
                                      &param_variant, 0);
     VariantClear(&param_variant);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        Win32HResultLogDebug(hr);
         goto release;
     }
 
@@ -1533,14 +1534,14 @@ static HRESULT SetNdisOffload(LPCWSTR if_description, uint32_t offload_flags,
                                      &param_variant, 0);
     VariantClear(&param_variant);
     if (hr != WBEM_S_NO_ERROR) {
-        Win32LogDebug(hr);
+        Win32HResultLogDebug(hr);
         goto release;
     }
 
     /* execute the method */
     hr = WbemMethodCallExec(&call, NULL);
     if (hr != S_OK) {
-        Win32LogDebug(hr);
+        Win32HResultLogDebug(hr);
         goto release;
     }
 

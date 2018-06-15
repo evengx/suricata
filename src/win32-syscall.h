@@ -33,6 +33,8 @@
 
 #include "util-device.h"
 
+const char *Win32GetErrorString(DWORD error_code, HMODULE ext_module);
+
 uint32_t Win32GetAdaptersAddresses(IP_ADAPTER_ADDRESSES **pif_info_list);
 uint32_t Win32FindAdapterAddresses(IP_ADAPTER_ADDRESSES *if_info_list,
                                    const char *adapter_name,
