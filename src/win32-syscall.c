@@ -180,14 +180,28 @@ static BSTR utob(uint64_t ui)
 
 /**
  * \brief Get the win32/wmi error string
+ *
+ * The caller should use the LocalFree function on the returned pointer to free
+ * the buffer when it is no longer needed.
  */
 const char *Win32GetErrorString(DWORD error_code, HMODULE ext_module)
 {
     char *error_string = NULL;
-    FormatMessageA(
-            FORMAT_MESSAGE_FROM_HMODULE | FORMAT_MESSAGE_ALLOCATE_BUFFER |
-                    FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-            ext_module, error_code, 0, (LPTSTR)&error_string, 0, NULL);
+
+    DWORD flags =
+            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_IGNORE_INSERTS;
+    if (ext_module != NULL) {
+        flags |= FORMAT_MESSAGE_FROM_HMODULE;
+    } else {
+        flags |= FORMAT_MESSAGE_FROM_SYSTEM;
+    }
+
+    FormatMessageA(flags, ext_module, error_code, 0, (LPTSTR)&error_string, 0,
+                   NULL);
+
+    if (error_string == NULL) {
+        return "";
+    }
 
     error_string[strlen(error_string) - 2] = 0; // remove line breaks
 
@@ -207,10 +221,10 @@ const char *Win32GetErrorString(DWORD error_code, HMODULE ext_module)
 static void _Win32HResultLog(SCLogLevel level, HRESULT hr, const char *file,
                              const char *function, const int line)
 {
-    const char *error_string = Win32GetErrorString(hr, WmiUtils());
-    SCLog(level, file, function, line, "HRESULT: %s (0x%" PRIx32 ")",
-          error_string, (uint32_t)(hr));
-    LocalFree((LPVOID)error_string);
+    const char *err_str = Win32GetErrorString(hr, WmiUtils());
+    SCLog(level, file, function, line, "HRESULT: %s (0x%08" PRIx32 ")", err_str,
+          (uint32_t)(hr));
+    LocalFree((LPVOID)err_str);
 }
 
 /**
@@ -287,7 +301,7 @@ release:
         const char *errbuf = Win32GetErrorString(err, WmiUtils());
         SCLogWarning(SC_ERR_SYSCALL,
                      "Failure when trying to get MTU via syscall for '%s': %s "
-                     "(%" PRId32 ")",
+                     "(0x%08" PRIx32 ")",
                      pcap_dev, errbuf, (uint32_t)err);
         LocalFree((LPVOID)errbuf);
     } else {
@@ -1192,12 +1206,12 @@ int GetIfaceOffloadingWin32(const char *pcap_dev, int csum, int other)
 
 release:
     if (ret == -1) {
-        const char *errstr = Win32GetErrorString(err, WmiUtils());
+        const char *err_str = Win32GetErrorString(err, WmiUtils());
         SCLogWarning(SC_ERR_SYSCALL,
                      "Failure when trying to get feature via syscall for '%s': "
-                     "%s (0x%" PRIx32 ")",
-                     pcap_dev, errstr, (uint32_t)err);
-        LocalFree((LPVOID)errstr);
+                     "%s (0x%08" PRIx32 ")",
+                     pcap_dev, err_str, (uint32_t)err);
+        LocalFree((LPVOID)err_str);
     }
 
     SCFree(if_info_list);

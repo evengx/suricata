@@ -548,10 +548,14 @@ TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *initdata,
     wd_qv->filter_handle = WinDivertOpen(wd_qv->filter_str, wd_qv->layer,
                                          wd_qv->priority, wd_qv->flags);
     if (wd_qv->filter_handle == INVALID_HANDLE_VALUE) {
-        DWORD error_code = GetLastError();
-        SCLogError(SC_ERR_FATAL, "WinDivertOpen failed: (%" PRIu32 ") %s: %s",
-                   (uint32_t)error_code, Win32GetErrorString(error_code, NULL),
-                   WinDivertGetErrorString(error_code));
+        DWORD err_code = GetLastError();
+        const char *win_err_str = Win32GetErrorString(err_code, NULL);
+        SCLogError(SC_ERR_FATAL,
+                   "WinDivertOpen failed, error %" PRId32 " (0x%08" PRIx32
+                   "): %s %s",
+                   (uint32_t)err_code, (uint32_t)err_code, win_err_str,
+                   WinDivertGetErrorString(err_code));
+        LocalFree((LPVOID)win_err_str);
 
         ret = TM_ECODE_FAILED;
         goto unlock;
