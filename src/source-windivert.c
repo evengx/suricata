@@ -145,11 +145,9 @@ static const char *WinDivertGetErrorString(DWORD error_code)
             return "The driver files WinDivert32.sys or WinDivert64.sys were "
                    "not found.";
         case ERROR_ACCESS_DENIED:
-            return "The calling application does not have Administrator "
-                   "privileges.";
+            return "Suricata must be run with Administrator privileges.";
         case ERROR_INVALID_PARAMETER:
-            return "This indicates an invalid packet filter string, layer, "
-                   "priority, or flags.";
+            return "The WinDivert packet filter string is invalid.";
         case ERROR_INVALID_IMAGE_HASH:
             return "The WinDivert32.sys or WinDivert64.sys driver does not "
                    "have a valid digital signature, or your copy of Windows is "
@@ -168,8 +166,7 @@ static const char *WinDivertGetErrorString(DWORD error_code)
                    "has been disabled.";
         case ERROR_PROC_NOT_FOUND:
             return "The error may occur for Windows Vista users. The "
-                   "solution "
-                   "is to install the following patch from Microsoft: "
+                   "solution is to install the following patch from Microsoft: "
                    "http://support.microsoft.com/kb/2761494.";
 
         // WinDivertSend errors
@@ -196,6 +193,20 @@ static const char *WinDivertGetErrorString(DWORD error_code)
             return "";
     }
 }
+
+/**
+ * \brief logs a WinDivert error at Error level.
+ */
+#define WinDivertLogError(err_code)                                            \
+    do {                                                                       \
+        const char *win_err_str = Win32GetErrorString((err_code), NULL);       \
+        SCLogError(SC_ERR_WINDIVERT_GENERIC,                                   \
+                   "WinDivertOpen failed, error %" PRId32 " (0x%08" PRIx32     \
+                   "): %s %s",                                                 \
+                   (uint32_t)(err_code), (uint32_t)(err_code), win_err_str,    \
+                   WinDivertGetErrorString(err_code));                         \
+        LocalFree((LPVOID)win_err_str);                                        \
+    } while (0);
 
 /**
  * \brief initializes QueryPerformanceCounter values so we can get
@@ -548,15 +559,7 @@ TmEcode ReceiveWinDivertThreadInit(ThreadVars *tv, const void *initdata,
     wd_qv->filter_handle = WinDivertOpen(wd_qv->filter_str, wd_qv->layer,
                                          wd_qv->priority, wd_qv->flags);
     if (wd_qv->filter_handle == INVALID_HANDLE_VALUE) {
-        DWORD err_code = GetLastError();
-        const char *win_err_str = Win32GetErrorString(err_code, NULL);
-        SCLogError(SC_ERR_FATAL,
-                   "WinDivertOpen failed, error %" PRId32 " (0x%08" PRIx32
-                   "): %s %s",
-                   (uint32_t)err_code, (uint32_t)err_code, win_err_str,
-                   WinDivertGetErrorString(err_code));
-        LocalFree((LPVOID)win_err_str);
-
+        WinDivertLogError(GetLastError());
         ret = TM_ECODE_FAILED;
         goto unlock;
     }
@@ -805,6 +808,7 @@ static TmEcode WinDivertVerdictHelper(ThreadVars *tv, Packet *p)
                                  GET_PKT_LEN(p), &p->windivert_v.addr, NULL);
 
     if (unlikely(!success)) {
+        WinDivertLogError(GetLastError());
         SCReturnInt(TM_ECODE_FAILED);
     }
 
