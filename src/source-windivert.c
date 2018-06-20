@@ -188,7 +188,6 @@ static const char *WinDivertGetErrorString(DWORD error_code)
                    "the error message usually resolves once the offending "
                    "program is uninstalled. This suggests a software "
                    "compatibility problem.";
-
         default:
             return "";
     }
@@ -600,7 +599,7 @@ static TmEcode WinDivertCollectFilterDevices(WinDivertThreadVars *wd_tv,
          if_info = if_info->Next) {
 
         if (WinDivertIfaceMatchFilter(wd_qv->filter_str, if_info->IfIndex)) {
-            SCLogInfo("Found adapter %s matching WinDivert filter %s",
+            SCLogConfig("Found adapter %s matching WinDivert filter %s",
                       if_info->AdapterName, wd_qv->filter_str);
 
             LiveDevice *new_ldev = SCCalloc(1, sizeof(LiveDevice));
